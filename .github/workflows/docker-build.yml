@@ -51,8 +51,10 @@ jobs:
 
     - name: Build the Docker image
       run: |
+        NAMESPACE=${{ github.repository_owner }}
+        NAMESPACE=${NAMESPACE,,}
         docker build . --file docker/Dockerfile \
-          --tag ghcr.io/${{ github.repository_owner }}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }} \
+          --tag ghcr.io/${NAMESPACE}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }} \
           --tag ${{ secrets.PRIVATE_REGISTRY_URL }}/${{ secrets.MAAP_REGISTRY_NAMESPACE }}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }}
 
     - name: Push to GHCR
