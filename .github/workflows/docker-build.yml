@@ -21,6 +21,7 @@ jobs:
       run: |
         # Get repo name from full repo path
         REPO_NAME=$(basename "$GITHUB_REPOSITORY")
+        REPO_NAME=${REPO_NAME,,}
 
         # Check if it's a tag push
         if [[ "$GITHUB_REF" == refs/tags/* ]]; then
