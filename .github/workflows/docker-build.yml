@@ -47,7 +47,6 @@ jobs:
         registry: ${{ secrets.PRIVATE_REGISTRY_URL }}
         username: ${{ secrets.PRIVATE_REGISTRY_USERNAME }}
         password: ${{ secrets.PRIVATE_REGISTRY_PASSWORD }}
-        maap_registry_namespace: ${{ secrets.MAAP_REGISTRY_NAMESPACE }}
 
     - name: Build the Docker image
       run: |
