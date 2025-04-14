@@ -1,0 +1,65 @@
+name: Docker Image CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags:
+      - '**'
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+
+  build_and_push:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set repo name and tag
+      id: vars
+      run: |
+        # Get repo name from full repo path
+        REPO_NAME=$(basename "$GITHUB_REPOSITORY")
+
+        # Check if it's a tag push
+        if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+        else
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          # Replace slashes/underscores with hyphens for Docker tag safety
+          TAG_NAME=$(echo "$BRANCH_NAME" | tr '/_' '--')
+        fi
+
+        echo "repo=$REPO_NAME" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Log in to Private Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ secrets.PRIVATE_REGISTRY_URL }}
+        username: ${{ secrets.PRIVATE_REGISTRY_USERNAME }}
+        password: ${{ secrets.PRIVATE_REGISTRY_PASSWORD }}
+        maap_registry_namespace: ${{ secrets.MAAP_REGISTRY_NAMESPACE }}
+
+    - name: Build the Docker image
+      run: |
+        docker build . --file docker/Dockerfile \
+          --tag ghcr.io/${{ github.repository_owner }}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }} \
+          --tag ${{ secrets.PRIVATE_REGISTRY_URL }}/${{ secrets.MAAP_REGISTRY_NAMESPACE }}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }}
+
+    - name: Push to GHCR
+      run: |
+        docker push ghcr.io/${{ github.repository_owner }}/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }}
+
+    - name: Push to Private Registry
+      run: |
+        docker push your.private.registry.com/${{ steps.vars.outputs.repo }}:${{ steps.vars.outputs.tag }}
+
