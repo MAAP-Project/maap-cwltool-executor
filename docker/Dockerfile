@@ -17,7 +17,7 @@ RUN apt-get update && \
     apt-get install -y docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /app && pip install cwltool==3.1.20250110105449
+RUN mkdir /app && pip install cwltool==3.1.20250110105449 PyYAML
 
 COPY dps_wrapper.py /app/dps_wrapper.py
 COPY dps_wrapper.sh /app/dps_wrapper.sh
