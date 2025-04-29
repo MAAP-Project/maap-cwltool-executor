@@ -31,7 +31,7 @@ def parse_cwl_inputs(cwl_file_path) -> [CommandInputParameter]:
     try:
         # Load the CWL document using the provided path/URI
         # The 'file://' prefix is often needed for local files
-        uri = f"file://{cwl_file_path}" if not cwl_file_path.startswith("file://") else cwl_file_path
+        uri = str(pathlib.Path(cwl_file_path).resolve().as_uri()) if not cwl_file_path.startswith("file://") else cwl_file_path
         cwl_object = load_document_by_uri(uri)
 
         # Check if the loaded object is a CommandLineTool
