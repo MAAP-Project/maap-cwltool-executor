@@ -17,16 +17,13 @@ RUN apt-get update && \
     apt-get install -y docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /app && pip install cwltool==3.1.20250110105449 PyYAML awscli
+RUN mkdir /app
 
-COPY dps_wrapper.py /app/dps_wrapper.py
-COPY dps_wrapper.sh /app/dps_wrapper.sh
-COPY create_inputs.py /app/create_inputs.py
-COPY pre_dps_wrapper.py /app/pre_dps_wrapper.py
-COPY get_param.py /app/get_param.py
-COPY get_username.py /app/get_username.py
-COPY aws-config /app/aws-config
-COPY get_maap_pgt_token.py /app/get_maap_pgt_token.py
+WORKDIR /app
+
+COPY . /app/
+
+RUN pip install cwltool==3.1.20250110105449 PyYAML awscli cwl_utils==0.35 pystac maap-py
 
 # copy over docker stats shim utility
 COPY docker_stats/docker-stats-on-exit-shim /docker-stats-on-exit-shim
