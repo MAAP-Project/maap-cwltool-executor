@@ -11,8 +11,7 @@ unset DPS_MACHINE_TOKEN
 mkdir -p input
 
 # Create inputs.yml from hysds context for input to cwltool command
-python /app/create_inputs.py
-python /app/pre_dps_wrapper.py
+python -m /app/create_inputs
 
 set -ex
 CWL_FILE=$1
