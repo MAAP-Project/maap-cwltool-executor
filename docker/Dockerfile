@@ -21,9 +21,9 @@ RUN mkdir /app
 
 WORKDIR /app
 
-COPY . /app/
+COPY --chmod=775 . /app/
 
-RUN pip install cwltool==3.1.20250110105449 PyYAML awscli cwl_utils==0.35 pystac maap-py
+RUN pip install cwltool==3.1.20250110105449 PyYAML awscli cwl_utils==0.35 pystac maap-py  requests
 
 # copy over docker stats shim utility
 COPY docker_stats/docker-stats-on-exit-shim /docker-stats-on-exit-shim
