@@ -17,7 +17,7 @@ CWL_FILE=$(basename "$CWL_FILE")
 python /app/create_inputs.py $CWL_FILE
 
 cwltool --no-read-only --no-match-user --preserve-environment MAAP_PGT \
-        --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD}
+        --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
         ${CWL_FILE} inputs.yml || (cp _stderr.txt _alt_traceback.txt && exit 1)
 
 USER_OUTPUT_DIR="output"
