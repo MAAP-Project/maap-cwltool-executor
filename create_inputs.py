@@ -9,11 +9,25 @@ from cwl_utils.parser import load_document_by_uri
 from cwl_utils.parser.cwl_v1_2 import CommandLineTool, CommandInputParameter
 import urllib.parse
 import stage_in
+import requests
 
 
 def get_id_from_uri(uri):
     fragment = urllib.parse.urlparse(uri).fragment
     return os.path.basename(fragment)
+
+
+def load_json_from_uri(uri):
+    try:
+        response = requests.get(uri)
+        response.raise_for_status()  # Raise error for bad status codes
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
+        return None
+    except ValueError as e:
+        print(f"Failed to parse JSON: {e}")
+        return None
 
 
 def parse_cwl_inputs(cwl_file_path) -> [CommandInputParameter]:
@@ -88,8 +102,8 @@ def map_inputs_from_context(job_inputs: dict, cwl_inputs: [CommandInputParameter
         if input_type == "Directory":
             print("Encountered STAC input, localizing assets.")
             # STAC Item json is assumed to have been downloaded by hysds
-            stac_item_file = os.path.basename(job_inputs.get(input_name))
-            stac_item_json = json.load(open(stac_item_file, "r"))
+            # stac_item_file = os.path.basename(job_inputs.get(input_name))
+            stac_item_json = load_json_from_uri(job_inputs.get(input_name))
             output_dir = str(pathlib.Path(input_name).resolve())
             stage_in.download_stac_item_assets_from_json(stac_item_json, output_dir)
             workflow_inputs[input_name] = {"class": "Directory", "path": output_dir}
