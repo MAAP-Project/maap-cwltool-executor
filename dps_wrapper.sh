@@ -14,7 +14,7 @@ CWL_FILE=$1
 aws s3 cp "$CWL_FILE" .
 CWL_FILE=$(basename "$CWL_FILE")
 # Create inputs.yml from hysds context for input to cwltool command
-python -m /app/create_inputs $CWL_FILE
+python /app/create_inputs.py $CWL_FILE
 
 cwltool --no-read-only --no-match-user --preserve-environment MAAP_PGT \
         --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD}
