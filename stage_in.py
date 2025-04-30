@@ -44,7 +44,7 @@ def download_stac_item_assets_from_json(item_json_data, output_dir="local_stac_c
             try:
                 dest = maap.downloadGranule(online_access_url=href, destination_path=item_dir, overwrite=True)
                 print("Download complete")
-                local_asset = pystac.Asset(href=dest, media_type=asset.media_type)
+                local_asset = pystac.Asset(href=f"./{os.path.basename(dest)}", media_type=asset.media_type)
                 local_item.add_asset(asset_key, local_asset)
             except Exception as e:
                 print(f"    Error downloading {asset_key}: {e}")
