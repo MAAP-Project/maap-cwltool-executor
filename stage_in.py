@@ -42,22 +42,23 @@ def download_stac_item_assets_from_json(item_json_data, output_dir="local_stac_c
             href = asset.href
             print(f"  Downloading asset '{asset_key}': {os.path.basename(href)}")
             try:
-                dest = maap.downloadGranule(online_access_url=href, destination_path=item_dir, overwrite=True)
+                dest = maap.downloadGranule(online_access_url=href, destination_path=os.path.dirname(item_dir),
+                                            overwrite=True)
                 print("Download complete")
-                local_asset = pystac.Asset(href=f"./{os.path.basename(dest)}", media_type=asset.media_type)
+                local_asset = pystac.Asset(href=f"{os.path.basename(dest)}", media_type=asset.media_type)
                 local_item.add_asset(asset_key, local_asset)
             except Exception as e:
                 print(f"    Error downloading {asset_key}: {e}")
-
+        local_item.make_asset_hrefs_relative()
         # Create a simple local STAC catalog
+        catalog_path = os.path.join(output_dir, "catalog.json")
         catalog = pystac.Catalog(id="local-downloaded-catalog",
-                                 description="A local catalog containing downloaded STAC item assets.")
-
+                                 description="A local catalog containing downloaded STAC item assets.",
+                                 catalog_type=pystac.CatalogType.SELF_CONTAINED,
+                                 href=catalog_path)
         catalog.add_item(local_item)
         # Save the catalog
-        catalog_path = os.path.join(output_dir, "catalog.json")
-        catalog.normalize_hrefs(output_dir)
-        catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+        catalog.save()
         print(f"\nLocal STAC catalog created at: {catalog_path}")
 
     except Exception as e:
