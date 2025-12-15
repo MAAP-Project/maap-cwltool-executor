@@ -3,7 +3,6 @@ import logging
 import os
 import json  # Import the json library
 import argparse
-import pathlib
 from pystac import Catalog, Item
 
 LOGGER = logging.getLogger(__name__)
@@ -193,3 +192,11 @@ For each STAC Item in the catalog, create two files:
         error_msg = f"Failed to process STAC catalog: {str(catalog_error)}"
         LOGGER.exception(f"ERROR: {error_msg}")
         raise RuntimeError(error_msg)
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--output-dir", type=str, default="local_stac_catalog",
+                    help="The directory to save the local STAC catalog")
+    args = vars(ap.parse_args())
+    convert_stac_to_hysds_in_ogc_app_pack(output_dir=args["output_dir"])
