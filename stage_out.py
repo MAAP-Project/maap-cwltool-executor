@@ -192,4 +192,4 @@ For each STAC Item in the catalog, create two files:
     except Exception as catalog_error:
         error_msg = f"Failed to process STAC catalog: {str(catalog_error)}"
         LOGGER.exception(f"ERROR: {error_msg}")
-        raise Exception(error_msg)
+        raise RuntimeError(error_msg)

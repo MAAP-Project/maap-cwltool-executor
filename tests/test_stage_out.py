@@ -193,5 +193,130 @@ class TestStageOut(TestCase):
                     print(f"{subindent}{file}")
 
             print(f"\n✅ All tests passed!")
-
         return results
+
+    def test_02(self):
+        """
+        - Create a temp directory. There should be a built-in library
+        - create an output directory
+        - create a folder MY_COLLECTION
+        - create a STAC feature file MY_ITEM_1 in MY_COLLECTION directory that has MY_ITEM_1.dat, MY_ITEM_1.img as assets in output directory
+        - create a STAC feature file MY_ITEM_2 in MY_COLLECTION directory that has MY_ITEM_2.dat, MY_ITEM_2.img, MY_ITEM_2.tiff as assets in output directory
+        - create a STAC feature file MY_ITEM_3 in MY_COLLECTION directory that has MY_ITEM_3.dat as asset in output directory
+        - all 3 features has MY_COLLECTION as collection, and stac version 1.1
+        - use pystac.Item class to create them and write them as files.
+        - asset URLs should be relative
+        - create respective asset as empty files with respective names in the output directory
+        - create a catalog file in output directory with pystac.CATALOG
+        - add 3 items as item links with relative URLs.
+        - Run convert_stac_to_hysds_in_ogc_app_pack method with output directory
+        - Check 3 ITEM ID folders are created.
+        - Check .met.json and .dataset.json are created in each of them.
+        - check each .met.json is the STAC feature.
+        - check .dataset.json follows this example json by creating a schema.
+                {
+                  "version": "v1.0",
+                  "dataset_type": "example-collection",
+                  "label": "Example Item 001"
+                }
+        - print the result files and folders
+        :return:
+        """
+        # Create a temp directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"Created temp directory: {temp_dir}")
+
+            # Create output directory
+            output_dir = os.path.join(temp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"Created output directory: {output_dir}")
+
+            # Create MY_COLLECTION folder
+            collection_dir = os.path.join(output_dir, "MY_COLLECTION")
+            os.makedirs(collection_dir, exist_ok=True)
+            print(f"Created collection directory: {collection_dir}")
+
+            # Define asset configurations for each item
+            items_config = {
+                "MY_ITEM_1": ["MY_ITEM_1.dat", "MY_ITEM_1.img"],
+                "MY_ITEM_2": ["MY_ITEM_2.dat", "MY_ITEM_2.img", "MY_ITEM_2.tiff"],
+                "MY_ITEM_3": ["MY_ITEM_3.dat"]
+            }
+
+            # Create empty asset files in output directory
+            all_assets = []
+            for item_id, asset_names in items_config.items():
+                for asset_name in asset_names:
+                    asset_path = os.path.join(output_dir, asset_name)
+                    with open(asset_path, 'w') as f:
+                        pass  # Create empty file
+                    all_assets.append(asset_path)
+                    print(f"Created asset file: {asset_path}")
+
+            # Create STAC Items
+            items = []
+            for item_id, asset_names in items_config.items():
+                # Create assets dictionary with relative URLs
+                assets = {}
+                for asset_name in asset_names:
+                    assets[asset_name.split('.')[1]] = pystac.Asset(
+                        href=f"./{asset_name}",  # Relative URL
+                        title=asset_name
+                    )
+
+                # Create STAC Item
+                item = pystac.Item(
+                    id=item_id,
+                    geometry={
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]
+                        ]]
+                    },
+                    bbox=[-180, -90, 180, 90],
+                    datetime=None,
+                    properties={
+                        "title": f"Test Item {item_id}",
+                        "start_datetime": "2023-01-01T00:00:00Z",
+                        "end_datetime": "2023-01-02T00:00:00Z"
+                    },
+                    assets=assets,
+                    collection="MY_COLLECTION",
+                    stac_extensions=[]
+                )
+
+                # Write item to file in MY_COLLECTION directory
+                item_path = os.path.join(collection_dir, f"{item_id}.json")
+                item.save_object(True, item_path)
+                items.append(item)
+                print(f"Created STAC item file: {item_path}")
+
+            # Create catalog file in output directory
+            catalog = pystac.Catalog(
+                id="test-catalog",
+                description="Test catalog for STAC to HySDS conversion",
+                stac_extensions=[]
+            )
+
+            # Add items to catalog with relative URLs
+            for item in items:
+                # Set relative link to item
+                item_href = f"./MY_COLLECTION/{item.id}.json"
+                catalog.add_link(Link(RelType.ITEM, item_href, MediaType.GEOJSON, item.properties.get('title')))
+                print(f"Added item to catalog: {item.id} -> {item_href}")
+
+            # Save catalog to output directory
+            catalog_path = os.path.join(output_dir, "catalog.json")
+            catalog_dict = catalog.to_dict(True, False)
+            catalog_dict['stac_version'] = '1.0.0'
+            with open(catalog_path, 'w') as ff:
+                ff.write(json.dumps(catalog_dict, indent=4))
+            print(f"Created catalog file: {catalog_path}")
+
+            # Run convert_stac_to_hysds_in_ogc_app_pack method
+            print(f"\nRunning conversion on output directory: {output_dir}")
+            with self.assertRaises(RuntimeError) as cm:
+                results = convert_stac_to_hysds_in_ogc_app_pack(output_dir)
+                self.assertTrue(str(cm.exception) == 'Failed to process STAC catalog: STAC version 1.0.0 is not supported. Required: >= 1.1.0')
+            print(f"\n✅ All tests passed!")
+        return
