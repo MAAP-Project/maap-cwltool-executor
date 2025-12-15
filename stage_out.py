@@ -4,7 +4,7 @@ import os
 import json  # Import the json library
 import argparse
 import pathlib
-from pystac import Catalog
+from pystac import Catalog, Item
 
 LOGGER = logging.getLogger(__name__)
 
@@ -89,11 +89,13 @@ For each STAC Item in the catalog, create two files:
     try:
 
         # Read and parse the STAC catalog
-        catalog = Catalog.from_file(catalog_path)
+        with open(catalog_path, 'r') as f:
+            catalog_dict = json.loads(f.read())
+        catalog = Catalog.from_dict(catalog_dict)
         LOGGER.info(f"Successfully parsed STAC catalog: {catalog.id}")
 
         # Validate STAC version is >= 1.1.0
-        stac_version = catalog.stac_version
+        stac_version = catalog_dict.get('stac_version', '0.0.0')
         if not stac_version:
             raise ValueError("STAC catalog missing version information")
 
@@ -114,14 +116,21 @@ For each STAC Item in the catalog, create two files:
             raise ValueError(f"Invalid STAC version format '{stac_version}'. Expected format: X.Y.Z")
 
         # Extract STAC Items from the catalog
-        items = list(catalog.get_items(recursive=True))
+        items = list(catalog.get_item_links())
         LOGGER.info(f"Found {len(items)} STAC Items in catalog")
 
         conversion_results = []
 
         # Process each STAC Item
-        for item in items:
+        for item_link in items:
             try:
+                # Convert relative href to absolute path if needed
+                if os.path.isabs(item_link.href):
+                    item_absolute_href = item_link.href
+                else:
+                    item_absolute_href = os.path.join(output_dir, item_link.href)
+                item = Item.from_file(item_absolute_href)
+
                 LOGGER.info(f"Processing STAC Item: {item.id}")
 
                 # Create directory for the item if it doesn't exist

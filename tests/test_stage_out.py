@@ -1,4 +1,11 @@
 from unittest import TestCase
+import tempfile
+import os
+import json
+import pystac
+from pystac import Link, RelType, MediaType
+
+from stage_out import convert_stac_to_hysds_in_ogc_app_pack
 
 
 class TestStageOut(TestCase):
@@ -29,4 +36,162 @@ class TestStageOut(TestCase):
         - print the result files and folders
         :return:
         """
-        return
+        # Create a temp directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"Created temp directory: {temp_dir}")
+
+            # Create output directory
+            output_dir = os.path.join(temp_dir, "output")
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"Created output directory: {output_dir}")
+
+            # Create MY_COLLECTION folder
+            collection_dir = os.path.join(output_dir, "MY_COLLECTION")
+            os.makedirs(collection_dir, exist_ok=True)
+            print(f"Created collection directory: {collection_dir}")
+
+            # Define asset configurations for each item
+            items_config = {
+                "MY_ITEM_1": ["MY_ITEM_1.dat", "MY_ITEM_1.img"],
+                "MY_ITEM_2": ["MY_ITEM_2.dat", "MY_ITEM_2.img", "MY_ITEM_2.tiff"],
+                "MY_ITEM_3": ["MY_ITEM_3.dat"]
+            }
+
+            # Create empty asset files in output directory
+            all_assets = []
+            for item_id, asset_names in items_config.items():
+                for asset_name in asset_names:
+                    asset_path = os.path.join(output_dir, asset_name)
+                    with open(asset_path, 'w') as f:
+                        pass  # Create empty file
+                    all_assets.append(asset_path)
+                    print(f"Created asset file: {asset_path}")
+
+            # Create STAC Items
+            items = []
+            for item_id, asset_names in items_config.items():
+                # Create assets dictionary with relative URLs
+                assets = {}
+                for asset_name in asset_names:
+                    assets[asset_name.split('.')[1]] = pystac.Asset(
+                        href=f"./{asset_name}",  # Relative URL
+                        title=asset_name
+                    )
+
+                # Create STAC Item
+                item = pystac.Item(
+                    id=item_id,
+                    geometry={
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]
+                        ]]
+                    },
+                    bbox=[-180, -90, 180, 90],
+                    datetime=None,
+                    properties={
+                        "title": f"Test Item {item_id}",
+                        "start_datetime": "2023-01-01T00:00:00Z",
+                        "end_datetime": "2023-01-02T00:00:00Z"
+                    },
+                    assets=assets,
+                    collection="MY_COLLECTION",
+                    stac_extensions=[]
+                )
+
+                # Write item to file in MY_COLLECTION directory
+                item_path = os.path.join(collection_dir, f"{item_id}.json")
+                item.save_object(True, item_path)
+                items.append(item)
+                print(f"Created STAC item file: {item_path}")
+
+            # Create catalog file in output directory
+            catalog = pystac.Catalog(
+                id="test-catalog",
+                description="Test catalog for STAC to HySDS conversion",
+                stac_extensions=[]
+            )
+
+            # Add items to catalog with relative URLs
+            for item in items:
+                # Set relative link to item
+                item_href = f"./MY_COLLECTION/{item.id}.json"
+                catalog.add_link(Link(RelType.ITEM, item_href, MediaType.GEOJSON, item.properties.get('title')))
+                print(f"Added item to catalog: {item.id} -> {item_href}")
+
+            # Save catalog to output directory
+            catalog_path = os.path.join(output_dir, "catalog.json")
+            catalog.save_object(True, catalog_path)
+            print(f"Created catalog file: {catalog_path}")
+
+            # Run convert_stac_to_hysds_in_ogc_app_pack method
+            print(f"\nRunning conversion on output directory: {output_dir}")
+            results = convert_stac_to_hysds_in_ogc_app_pack(output_dir)
+
+            # Validate results
+            print(f"\nValidation Results:")
+            self.assertEqual(len(results), 3, "Should have 3 conversion results")
+
+            # Check 3 ITEM ID folders are created
+            expected_item_dirs = ["MY_ITEM_1", "MY_ITEM_2", "MY_ITEM_3"]
+            for item_id in expected_item_dirs:
+                item_dir = os.path.join(output_dir, item_id)
+                self.assertTrue(os.path.exists(item_dir), f"Item directory should exist: {item_dir}")
+                print(f"✓ Item directory exists: {item_dir}")
+
+            # Check .met.json and .dataset.json are created in each directory
+            for item_id in expected_item_dirs:
+                item_dir = os.path.join(output_dir, item_id)
+
+                # Check .met.json file
+                met_path = os.path.join(item_dir, f"{item_id}.met.json")
+                self.assertTrue(os.path.exists(met_path), f"Met file should exist: {met_path}")
+                print(f"✓ Met file exists: {met_path}")
+
+                # Check .dataset.json file
+                dataset_path = os.path.join(item_dir, f"{item_id}.dataset.json")
+                self.assertTrue(os.path.exists(dataset_path), f"Dataset file should exist: {dataset_path}")
+                print(f"✓ Dataset file exists: {dataset_path}")
+
+                # Validate .met.json contains the STAC feature
+                with open(met_path, 'r') as f:
+                    met_content = json.load(f)
+
+                self.assertEqual(met_content['type'], 'Feature', "Met file should be a STAC Feature")
+                self.assertEqual(met_content['id'], item_id, f"Met file should have correct ID: {item_id}")
+                self.assertEqual(met_content['collection'], 'MY_COLLECTION', "Met file should have correct collection")
+                print(f"✓ Met file content validated for: {item_id}")
+
+                # Validate .dataset.json follows the expected schema
+                with open(dataset_path, 'r') as f:
+                    dataset_content = json.load(f)
+
+                expected_schema = {
+                    "version": "v1.0",
+                    "dataset_type": "MY_COLLECTION",
+                    "label": f"Test Item {item_id}"
+                }
+
+                self.assertEqual(dataset_content['version'], expected_schema['version'])
+                self.assertEqual(dataset_content['dataset_type'], expected_schema['dataset_type'])
+                self.assertEqual(dataset_content['label'], expected_schema['label'])
+                print(f"✓ Dataset file content validated for: {item_id}")
+
+            # Print result files and folders
+            print(f"\n=== RESULT FILES AND FOLDERS ===")
+            print(f"Temp directory: {temp_dir}")
+            print(f"Output directory: {output_dir}")
+            print(f"Conversion results: {len([r for r in results if r['status'] == 'success'])} successful, {len([r for r in results if r['status'] == 'error'])} failed")
+
+            print(f"\nDirectory structure:")
+            for root, dirs, files in os.walk(output_dir):
+                level = root.replace(output_dir, '').count(os.sep)
+                indent = ' ' * 2 * level
+                print(f"{indent}{os.path.basename(root)}/")
+                subindent = ' ' * 2 * (level + 1)
+                for file in files:
+                    print(f"{subindent}{file}")
+
+            print(f"\n✅ All tests passed!")
+
+        return results
