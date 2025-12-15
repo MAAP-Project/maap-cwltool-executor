@@ -91,6 +91,28 @@ For each STAC Item in the catalog, create two files:
         # Read and parse the STAC catalog
         catalog = Catalog.from_file(catalog_path)
         LOGGER.info(f"Successfully parsed STAC catalog: {catalog.id}")
+
+        # Validate STAC version is >= 1.1.0
+        stac_version = catalog.stac_version
+        if not stac_version:
+            raise ValueError("STAC catalog missing version information")
+
+        # Parse version string to compare (e.g. "1.1.0" -> [1, 1, 0])
+        try:
+            version_parts = [int(x) for x in stac_version.split('.')]
+            required_parts = [1, 1, 0]  # Version 1.1.0
+
+            # Compare version parts
+            if version_parts < required_parts:
+                raise ValueError(f"STAC version {stac_version} is not supported. Required: >= 1.1.0")
+
+            LOGGER.info(f"STAC version validation passed: {stac_version}")
+
+        except ValueError as ve:
+            if "not supported" in str(ve):
+                raise ve
+            raise ValueError(f"Invalid STAC version format '{stac_version}'. Expected format: X.Y.Z")
+
         # Extract STAC Items from the catalog
         items = list(catalog.get_items(recursive=True))
         LOGGER.info(f"Found {len(items)} STAC Items in catalog")
