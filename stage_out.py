@@ -3,7 +3,7 @@ import logging
 import os
 import json  # Import the json library
 import argparse
-from pystac import Catalog, Item
+from pystac import Catalog, Item, Collection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -114,21 +114,56 @@ For each STAC Item in the catalog, create two files:
                 raise ve
             raise ValueError(f"Invalid STAC version format '{stac_version}'. Expected format: X.Y.Z")
 
-        # Extract STAC Items from the catalog
-        items = list(catalog.get_item_links())
-        LOGGER.info(f"Found {len(items)} STAC Items in catalog")
+        # Extract STAC Items from the catalog (including items from collections)
+        item_links = []
 
+        # Get all child links from catalog
+        all_links = [k for k in catalog.get_links() if k.rel in ['item', 'child', 'collection'] and not k.target.startswith('http')]
+
+        LOGGER.info(f"Found {len(all_links)} total eligible links in catalog")
+        for each in all_links:
+            if os.path.isabs(each.target):
+                continue
+            each.target = os.path.join(output_dir, each.target)
+            debug = 1
+        for link in all_links:
+            # Check if link exists locally
+            if not os.path.exists(link.target):
+                LOGGER.warning(f"Local link file not found: {link.target}")
+                continue
+
+            # Handle different link types
+            if link.rel == 'item':
+                # Direct item link
+                item_links.append(link)
+                LOGGER.info(f"Found item link: {link.target}")
+            elif link.rel == 'child' or link.rel == 'collection':
+                # Collection link - read collection and extract items
+                try:
+                    collection = Collection.from_file(link.target)
+                    collection_item_links = list(collection.get_item_links())
+                    collection_folder = os.path.dirname(link.target)
+                    temp_item_links = [k for k in collection.get_links() if k.rel in ['item'] and not k.target.startswith('http')]
+                    for each in temp_item_links:
+                        if os.path.isabs(each.target):
+                            continue
+                        each.target = os.path.join(collection_folder, each.target)
+                    item_links.extend(temp_item_links)
+                    LOGGER.info(f"Found collection '{collection.id}' with {len(collection_item_links)} items: {link.target}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to process collection link '{link.target}': {str(e)}")
+                    continue
+            else:
+                # Other link types - log and ignore
+                LOGGER.info(f"Ignoring link of type '{link.rel}': {link.target}")
+
+        LOGGER.info(f"Total STAC Items to process: {len(item_links)}")
         conversion_results = []
 
         # Process each STAC Item
-        for item_link in items:
+        for item_link in item_links:
             try:
-                # Convert relative href to absolute path if needed
-                if os.path.isabs(item_link.href):
-                    item_absolute_href = item_link.href
-                else:
-                    item_absolute_href = os.path.join(output_dir, item_link.href)
-                item = Item.from_file(item_absolute_href)
+                item = Item.from_file(item_link.target)
 
                 LOGGER.info(f"Processing STAC Item: {item.id}")
 
@@ -176,7 +211,7 @@ For each STAC Item in the catalog, create two files:
         failed = len([r for r in conversion_results if r["status"] == "error"])
 
         LOGGER.info(f"\nConversion Summary:")
-        LOGGER.info(f"  Total Items: {len(items)}")
+        LOGGER.info(f"  Total Items: {len(item_links)}")
         LOGGER.info(f"  Successful: {successful}")
         LOGGER.info(f"  Failed: {failed}")
 

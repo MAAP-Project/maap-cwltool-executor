@@ -320,3 +320,5 @@ class TestStageOut(TestCase):
                 self.assertTrue(str(cm.exception) == 'Failed to process STAC catalog: STAC version 1.0.0 is not supported. Required: >= 1.1.0')
             print(f"\n✅ All tests passed!")
         return
+
+
