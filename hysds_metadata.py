@@ -1,0 +1,162 @@
+"""
+HySDS Metadata Creation Module
+
+This module handles creation of HySDS-compliant metadata files (.dataset.json and .met.json)
+for both STAC catalog outputs and non-STAC directory outputs.
+"""
+
+import json
+import os
+from typing import Dict, Any, Optional, Tuple
+
+
+def create_dataset_metadata(
+    dataset_name: str,
+    job_info: Dict[str, Any],
+    stac_metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Create HySDS dataset.json metadata
+
+    Args:
+        dataset_name: Name of the HySDS dataset
+        job_info: Job metadata (username, algorithm_name, version, tag)
+        stac_metadata: STAC catalog metadata (optional)
+
+    Returns:
+        Dictionary for dataset.json file
+    """
+    dataset_json = {
+        "version": "v1.0"
+    }
+
+    # If STAC metadata present, add STAC-specific fields
+    if stac_metadata:
+        dataset_json["stac_enabled"] = True
+        dataset_json["stac_catalog_id"] = stac_metadata.get('catalog_id')
+
+        # Extract collection IDs from items
+        collections = set()
+        for item in stac_metadata.get('items', []):
+            if item.get('collection'):
+                collections.add(item['collection'])
+
+        dataset_json["stac_collections"] = list(collections)
+        dataset_json["total_items"] = stac_metadata.get('item_count', 0)
+        dataset_json["output_type"] = "stac_catalog"
+
+    return dataset_json
+
+
+def create_met_metadata(
+    dataset_name: str,
+    job_info: Dict[str, Any],
+    stac_metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Create HySDS met.json metadata
+
+    Args:
+        dataset_name: Name of the HySDS dataset
+        job_info: Job metadata (username, algorithm_name, version, tag)
+        stac_metadata: STAC catalog metadata (optional)
+
+    Returns:
+        Dictionary for met.json file
+    """
+    met_json = {
+        "username": job_info.get("username", "unknown"),
+        "algorithm_name": job_info.get("algorithm_name", "unknown"),
+        "algorithm_version": job_info.get("algorithm_version", "unknown"),
+        "tag": job_info.get("tag", "unknown")
+    }
+
+    # If STAC metadata present, add comprehensive STAC catalog inventory
+    if stac_metadata:
+        # Build STAC catalog summary with item inventory
+        stac_catalog_summary = {
+            "id": stac_metadata.get('catalog_id'),
+            "description": stac_metadata.get('description'),
+            "stac_version": stac_metadata.get('stac_version'),
+            "collections": []
+        }
+
+        # Group items by collection
+        collections_dict = {}
+        for item in stac_metadata.get('items', []):
+            collection_id = item.get('collection', 'uncategorized')
+            if collection_id not in collections_dict:
+                collections_dict[collection_id] = []
+            collections_dict[collection_id].append(item)
+
+        # Create collection entries with their items
+        for collection_id, items in collections_dict.items():
+            collection_entry = {
+                "id": collection_id,
+                "item_count": len(items),
+                "items": items
+            }
+
+            # Add extent info if available
+            if stac_metadata.get('extent'):
+                collection_entry["extent"] = stac_metadata.get('extent')
+
+            if stac_metadata.get('keywords'):
+                collection_entry["keywords"] = stac_metadata.get('keywords')
+
+            if stac_metadata.get('license'):
+                collection_entry["license"] = stac_metadata.get('license')
+
+            stac_catalog_summary["collections"].append(collection_entry)
+
+        met_json["stac_catalog"] = stac_catalog_summary
+
+    return met_json
+
+
+def write_metadata_files(
+    dataset_dir: str,
+    dataset_name: str,
+    stac_metadata: Optional[Dict[str, Any]],
+    job_info: Dict[str, Any]
+) -> None:
+    """
+    Main function to write all HySDS metadata files
+
+    Args:
+        dataset_dir: Path to the dataset directory
+        dataset_name: Name of the dataset (used for file naming)
+        stac_metadata: STAC metadata if available
+        job_info: Job metadata from _job.json
+    """
+    try:
+        # Create dataset.json
+        dataset_json = create_dataset_metadata(dataset_name, job_info, stac_metadata)
+        dataset_json_path = os.path.join(dataset_dir, f"{dataset_name}.dataset.json")
+
+        with open(dataset_json_path, 'w') as f:
+            json.dump(dataset_json, f, indent=2)
+
+        print(f"Created: {dataset_json_path}")
+
+        # Create met.json
+        met_json = create_met_metadata(dataset_name, job_info, stac_metadata)
+        met_json_path = os.path.join(dataset_dir, f"{dataset_name}.met.json")
+
+        with open(met_json_path, 'w') as f:
+            json.dump(met_json, f, indent=2)
+
+        print(f"Created: {met_json_path}")
+
+        # Summary
+        print(f"\n=== HySDS Metadata Created ===")
+        print(f"Dataset: {dataset_name}")
+        print(f"Files created: 2 ({dataset_name}.dataset.json, {dataset_name}.met.json)")
+
+        if stac_metadata:
+            print(f"STAC Catalog: {stac_metadata.get('catalog_id')}")
+            print(f"Total Items: {stac_metadata.get('item_count', 0)}")
+
+    except Exception as e:
+        print(f"Error creating HySDS metadata: {e}")
+        raise
