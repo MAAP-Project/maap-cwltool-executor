@@ -3,79 +3,16 @@ import logging
 import os
 import json  # Import the json library
 import argparse
+from typing import Any, Dict
+
 from pystac import Catalog, Item, Collection
 
 LOGGER = logging.getLogger(__name__)
 
 
-def convert_stac_to_hysds_in_ogc_app_pack(output_dir):
-    """
-    ### Requirements
-#### Input
-- Local STAC catalog with a `catalog.json` file in the output directory
-- STAC specification: **1.1.0**
-- Structure: **Flat catalog** (no nested catalogs or collections)
-#### Output
-For each STAC Item in the catalog, create two files:
-1. `<item_name>.met.json` - Contains the complete STAC Item metadata
-2. `<item_name>.dataset.json` - Contains HySDS dataset configuration
-#### Functional Requirements
-1. **STAC Catalog Processing**
-   - Locate and read `catalog.json` in the output directory
-   - Parse STAC Items from the catalog (STAC 1.1.0 format)
-   - Iterate through each Item in the catalog
-2. **HySDS Dataset Creation**
-   - For each STAC Item, create a directory named after the Item ID
-   - Generate `<item_id>.met.json`:
-     - Include the entire STAC Item JSON as-is
-     - Preserve all STAC properties and metadata unchanged
-   - Generate `<item_id>.dataset.json`:
-     - Map STAC Collection ID (if present) to HySDS `dataset_type` field
-     - Include standard HySDS dataset configuration fields
-3. **Directory Structure Preservation**
-   - Maintain the existing STAC catalog directory structure
-   - Do NOT move, copy, or relocate any data files referenced in STAC assets
-   - Only create the `.met.json` and `.dataset.json` files alongside existing data
-4. **Error Handling**
-   - Validate that `catalog.json` exists
-   - Handle missing or malformed STAC Items gracefully
-   - Log errors for Items that fail conversion
-   - Support partial success (some Items convert successfully while others fail)
-   - Provide clear error messages for debugging
-#### File Format Examples
-**Example `<item_id>.met.json`:**
-```json
-{
-  "type": "Feature",
-  "stac_version": "1.1.0",
-  "id": "example-item-001",
-  "geometry": { ... },
-  "properties": { ... },
-  "collection": "example-collection",
-  "links": [ ... ],
-  "assets": { ... }
-}
-```
-**Example `<item_id>.dataset.json`:**
-```json
-{
-  "version": "v1.0",
-  "dataset_type": "example-collection",
-  "label": "Example Item 001"
-}
-```
-    :param output_dir:
-    :return:
-    """
-    # Validate that catalog.json exists in output directory
-    catalog_path = os.path.join(output_dir, "catalog.json")
-    if not os.path.exists(catalog_path):
-        raise FileNotFoundError(f"STAC catalog.json not found at: {catalog_path}")
-
-    LOGGER.info(f"Found STAC catalog at: {catalog_path}")
-
+def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
     try:
-
+        catalog_dir = os.path.dirname(catalog_path)
         # Read and parse the STAC catalog
         with open(catalog_path, 'r') as f:
             catalog_dict = json.loads(f.read())
@@ -113,7 +50,7 @@ For each STAC Item in the catalog, create two files:
         for each in all_links:
             if os.path.isabs(each.target):
                 continue
-            each.target = os.path.join(output_dir, each.target)
+            each.target = os.path.join(catalog_dir, each.target)
             debug = 1
         for link in all_links:
             # Check if link exists locally
@@ -158,7 +95,7 @@ For each STAC Item in the catalog, create two files:
 
 
                 # Create directory for the item if it doesn't exist
-                item_dir = os.path.join(output_dir, item.id)
+                item_dir = os.path.join(catalog_dir, item.id)
                 os.makedirs(item_dir, exist_ok=True)
 
                 # Update asset hrefs to be relative to the new item_dir location
@@ -240,13 +177,80 @@ For each STAC Item in the catalog, create two files:
             for result in conversion_results:
                 if result["status"] == "error":
                     LOGGER.warning(f"  - {result['item_id']}: {result['error']}")
-
-        return conversion_results
-
     except Exception as catalog_error:
         error_msg = f"Failed to process STAC catalog: {str(catalog_error)}"
         LOGGER.exception(f"ERROR: {error_msg}")
         raise RuntimeError(error_msg)
+    return conversion_results
+
+
+def convert_stac_to_hysds_in_ogc_app_pack(output_dir):
+    """
+    ### Requirements
+#### Input
+- Local STAC catalog with a `catalog.json` file in the output directory
+- STAC specification: **1.1.0**
+- Structure: **Flat catalog** (no nested catalogs or collections)
+#### Output
+For each STAC Item in the catalog, create two files:
+1. `<item_name>.met.json` - Contains the complete STAC Item metadata
+2. `<item_name>.dataset.json` - Contains HySDS dataset configuration
+#### Functional Requirements
+1. **STAC Catalog Processing**
+   - Locate and read `catalog.json` in the output directory
+   - Parse STAC Items from the catalog (STAC 1.1.0 format)
+   - Iterate through each Item in the catalog
+2. **HySDS Dataset Creation**
+   - For each STAC Item, create a directory named after the Item ID
+   - Generate `<item_id>.met.json`:
+     - Include the entire STAC Item JSON as-is
+     - Preserve all STAC properties and metadata unchanged
+   - Generate `<item_id>.dataset.json`:
+     - Map STAC Collection ID (if present) to HySDS `dataset_type` field
+     - Include standard HySDS dataset configuration fields
+3. **Directory Structure Preservation**
+   - Maintain the existing STAC catalog directory structure
+   - Do NOT move, copy, or relocate any data files referenced in STAC assets
+   - Only create the `.met.json` and `.dataset.json` files alongside existing data
+4. **Error Handling**
+   - Validate that `catalog.json` exists
+   - Handle missing or malformed STAC Items gracefully
+   - Log errors for Items that fail conversion
+   - Support partial success (some Items convert successfully while others fail)
+   - Provide clear error messages for debugging
+#### File Format Examples
+**Example `<item_id>.met.json`:**
+```json
+{
+  "type": "Feature",
+  "stac_version": "1.1.0",
+  "id": "example-item-001",
+  "geometry": { ... },
+  "properties": { ... },
+  "collection": "example-collection",
+  "links": [ ... ],
+  "assets": { ... }
+}
+```
+**Example `<item_id>.dataset.json`:**
+```json
+{
+  "version": "v1.0",
+  "dataset_type": "example-collection",
+  "label": "Example Item 001"
+}
+```
+    :param output_dir:
+    :return:
+    """
+    # Validate that catalog.json exists in output directory
+    catalog_path = os.path.join(output_dir, "catalog.json")
+    if not os.path.exists(catalog_path):
+        raise FileNotFoundError(f"STAC catalog.json not found at: {catalog_path}")
+
+    LOGGER.info(f"Found STAC catalog at: {catalog_path}")
+    return walk_stac_catalog(catalog_path)
+
 
 
 if __name__ == "__main__":
