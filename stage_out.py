@@ -271,7 +271,7 @@ def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
 
     # Walk the catalog and extract metadata
     catalog_metadata = walk_stac_catalog(catalog_file)
-
+    print(f'catalog_data: {catalog_metadata}')
     if not catalog_metadata:
         return None
 

@@ -156,14 +156,40 @@ For each STAC Item in the catalog, create two files:
 
                 LOGGER.info(f"Processing STAC Item: {item.id}")
 
-                """
-                
-                Update:
-                 
-                """
+
                 # Create directory for the item if it doesn't exist
                 item_dir = os.path.join(output_dir, item.id)
                 os.makedirs(item_dir, exist_ok=True)
+
+                # Update asset hrefs to be relative to the new item_dir location
+                # Get the directory where the original item.json is located
+                original_item_dir = os.path.dirname(item_link.target)
+
+                # Update each asset's href to be relative to the new item_dir
+                for asset_key, asset in item.assets.items():
+                    original_href = asset.href
+
+                    # Skip absolute URLs (http/https)
+                    if original_href.startswith(('http://', 'https://')):
+                        LOGGER.info(f"  Skipping remote asset: {original_href}")
+                        continue
+
+                    # Resolve the asset's absolute path from the original item location
+                    if os.path.isabs(original_href):
+                        # Already absolute path
+                        asset_absolute_path = original_href
+                    else:
+                        # Relative path - resolve from original item.json location
+                        asset_absolute_path = os.path.abspath(
+                            os.path.join(original_item_dir, original_href)
+                        )
+
+                    # Calculate new relative path from item_dir to the asset
+                    new_relative_href = os.path.relpath(asset_absolute_path, item_dir)
+
+                    # Update the asset href
+                    asset.href = new_relative_href
+                    LOGGER.info(f"  Updated asset '{asset_key}': {original_href} -> {new_relative_href}")
 
                 # Generate <item_id>.met.json with complete STAC Item metadata
                 met_path = os.path.join(item_dir, f"{item.id}.met.json")
