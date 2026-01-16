@@ -11,6 +11,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
+    # Initialize catalog_data dictionary
+    catalog_data = {}
+
     try:
         catalog_dir = os.path.dirname(catalog_path)
         # Read and parse the STAC catalog
@@ -18,6 +21,25 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
             catalog_dict = json.loads(f.read())
         catalog = Catalog.from_dict(catalog_dict)
         LOGGER.info(f"Successfully parsed STAC catalog: {catalog.id}")
+
+        # Populate catalog metadata
+        catalog_data['id'] = catalog.id
+        catalog_data['description'] = catalog.description or ''
+        catalog_data['stac_object_type'] = catalog.STAC_OBJECT_TYPE
+        catalog_data['catalog_path'] = catalog_path
+
+        # If this is a collection, extract extent and other metadata
+        if hasattr(catalog, 'extent'):
+            catalog_data['extent'] = {
+                'spatial': {'bbox': catalog.extent.spatial.bboxes} if catalog.extent.spatial else {},
+                'temporal': {'interval': catalog.extent.temporal.intervals} if catalog.extent.temporal else {}
+            }
+
+        if hasattr(catalog, 'keywords'):
+            catalog_data['keywords'] = catalog.keywords or []
+
+        if hasattr(catalog, 'license'):
+            catalog_data['license'] = catalog.license or ''
 
         # Validate STAC version is >= 1.1.0
         stac_version = catalog_dict.get('stac_version', '0.0.0')
@@ -85,6 +107,7 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
 
         LOGGER.info(f"Total STAC Items to process: {len(item_links)}")
         conversion_results = []
+        items = []  # List to store item metadata for catalog_data
 
         # Process each STAC Item
         for item_link in item_links:
@@ -93,6 +116,27 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
 
                 LOGGER.info(f"Processing STAC Item: {item.id}")
 
+                # Build item metadata for catalog_data (before any modifications)
+                item_metadata = {
+                    'id': item.id,
+                    'collection': item.collection_id,
+                    'datetime': item.datetime.isoformat() if item.datetime else None,
+                    'bbox': item.bbox,
+                    'assets': {}
+                }
+
+                # Extract asset info for catalog_data
+                for asset_name, asset in item.assets.items():
+                    item_metadata['assets'][asset_name] = {
+                        'href': asset.href,
+                        'type': asset.media_type
+                    }
+
+                # Extract key properties
+                item_metadata['properties'] = item.properties or {}
+
+                # Add to items list
+                items.append(item_metadata)
 
                 # Create directory for the item if it doesn't exist
                 item_dir = os.path.join(catalog_dir, item.id)
@@ -177,11 +221,21 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
             for result in conversion_results:
                 if result["status"] == "error":
                     LOGGER.warning(f"  - {result['item_id']}: {result['error']}")
+
+        # Add items list and count to catalog_data
+        catalog_data['items'] = items
+        catalog_data['item_count'] = len(items)
+
+        # Return both catalog_data and conversion_results
+        return {
+            'catalog_data': catalog_data,
+            'conversion_results': conversion_results
+        }
+
     except Exception as catalog_error:
         error_msg = f"Failed to process STAC catalog: {str(catalog_error)}"
         LOGGER.exception(f"ERROR: {error_msg}")
         raise RuntimeError(error_msg)
-    return conversion_results
 
 
 def convert_stac_to_hysds_in_ogc_app_pack(output_dir):
@@ -249,7 +303,11 @@ For each STAC Item in the catalog, create two files:
         raise FileNotFoundError(f"STAC catalog.json not found at: {catalog_path}")
 
     LOGGER.info(f"Found STAC catalog at: {catalog_path}")
-    return walk_stac_catalog(catalog_path)
+    result = walk_stac_catalog(catalog_path)
+
+    # Return conversion_results for backward compatibility
+    # (catalog_data is also available in result['catalog_data'] if needed)
+    return result.get('conversion_results', [])
 
 
 
