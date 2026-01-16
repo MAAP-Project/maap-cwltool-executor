@@ -174,7 +174,14 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
 
     try:
         # Load the catalog using pystac
-        catalog = pystac.read_file(catalog_path)
+        stac_object = pystac.read_file(catalog_path)
+
+        # Ensure it's a Catalog or Collection (which support get_items)
+        if not isinstance(stac_object, (pystac.Catalog, pystac.Collection)):
+            print(f"  Warning: STAC object is not a Catalog or Collection (type: {type(stac_object).__name__})")
+            return catalog_data
+
+        catalog = stac_object
 
         catalog_data['id'] = catalog.id
         catalog_data['description'] = catalog.description or ''
@@ -312,9 +319,13 @@ def catalog_stac_outputs(output_paths: Dict[str, Dict[str, Any]]) -> Dict[str, s
                             break
 
                     if catalog_file:
-                        catalog = pystac.read_file(catalog_file)
-                        stac_catalogs[output_id] = f"STAC {catalog.STAC_OBJECT_TYPE}: {catalog.description or 'No description'}"
-                        print(f"  Valid STAC catalog: {catalog.id}")
+                        stac_object = pystac.read_file(catalog_file)
+                        if isinstance(stac_object, (pystac.Catalog, pystac.Collection)):
+                            stac_catalogs[output_id] = f"STAC {stac_object.STAC_OBJECT_TYPE}: {stac_object.description or 'No description'}"
+                            print(f"  Valid STAC catalog: {stac_object.id}")
+                        else:
+                            stac_catalogs[output_id] = f"STAC object (unexpected type: {type(stac_object).__name__})"
+                            print(f"  Warning: Unexpected STAC object type: {type(stac_object).__name__}")
                     else:
                         stac_catalogs[output_id] = "STAC catalog (no main catalog file found)"
 
@@ -385,14 +396,12 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Di
         is_directory = output_info['is_directory']
 
         print(f"  {output_id}: {output_dir} ({output_info['type']})")
-
         output_dict = {
             'output_id': output_id,
             'output_dir': output_dir,
             'output_type': output_info['type'],
             'is_directory': is_directory
         }
-
         # Extract STAC metadata if this is a directory that's a STAC catalog
         if is_directory:
             stac_metadata = extract_stac_metadata(output_dir)
@@ -455,5 +464,16 @@ def main():
             sys.exit(1)
 
 
+def debug_main():
+    result = stage_out_outputs('/Users/wphyo/Projects/unity/maap-cwltool-executor/example_workflow.cwl')
+    print(json.dumps(result))
+    if result['primary_output']:
+        print(f"\nPrimary output directory: {result['primary_output']}")
+    else:
+        print("\nNo outputs found")
+        sys.exit(1)
+    return
+
 if __name__ == "__main__":
-    main()
+    # main()
+    debug_main()
