@@ -11,6 +11,7 @@ from cwl_utils.parser.cwl_v1_2 import CommandLineTool, CommandOutputParameter
 import urllib.parse
 import pystac
 
+from temp_stage_out import walk_stac_catalog as walk_stac_catalog_2
 
 def get_id_from_uri(uri):
     """Extract ID from CWL URI fragment"""
@@ -270,11 +271,10 @@ def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
         return None
 
     # Walk the catalog and extract metadata
-    catalog_metadata = walk_stac_catalog(catalog_file)
-    print(f'catalog_data: {catalog_metadata}')
+    catalog_metadata = walk_stac_catalog_2(catalog_file)
     if not catalog_metadata:
         return None
-
+    catalog_metadata = catalog_metadata['catalog_data']
     return {
         'is_stac': True,
         'catalog_id': catalog_metadata.get('id'),
