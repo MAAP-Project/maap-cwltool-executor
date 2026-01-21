@@ -49,7 +49,7 @@ def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
         # Parse version string to compare (e.g. "1.1.0" -> [1, 1, 0])
         try:
             version_parts = [int(x) for x in stac_version.split('.')]
-            required_parts = [1, 1, 0]  # Version 1.1.0
+            required_parts = [1, 0, 0]  # Version 1.1.0
 
             # Compare version parts
             if version_parts < required_parts:
