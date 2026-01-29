@@ -9,6 +9,21 @@ import json
 import os
 from typing import Dict, Any, Optional, Tuple
 
+def get_job_info():
+    """Extract job information from _job.json"""
+    try:
+        with open("_job.json") as fr:
+            job = json.loads(fr.read())
+            username = job.get("username", "null")
+            job_type_info = str(job.get("type")).split(":")  # example job-s1_orbit_crawler:release-20190313
+            algo_name = job_type_info[0].replace("job-", "")
+            algo_version = job_type_info[1]
+            tag = job.get("tag", "null-tag")
+            return {"username": username, "algorithm_name": algo_name, "algorithm_version": algo_version, "tag": tag}
+    except Exception as e:
+        print(f"Warning: Could not read _job.json: {e}")
+        return {"username": "unknown", "algorithm_name": "unknown", "algorithm_version": "unknown", "tag": "unknown"}
+
 
 def create_dataset_metadata(
     dataset_name: str,

@@ -12,6 +12,8 @@ from pystac import Catalog, Item, Collection
 import urllib.parse
 import pystac
 
+from hysds_metadata import write_metadata_files, get_job_info
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -483,6 +485,7 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Di
                 output_dict['stac_metadata'] = stac_metadata
                 print(f"    STAC: {stac_metadata['stac_object_type']} - {stac_metadata['description']}")
                 print(f"    Items: {stac_metadata['item_count']}")
+            write_metadata_files(output_dir, stac_metadata['catalog_id'], stac_metadata, get_job_info())
 
         outputs_list.append(output_dict)
 
