@@ -1,17 +1,247 @@
+import logging
 import os
 import sys
 import json
 import glob
-import shutil
 import pathlib
 import argparse
 from typing import List, Dict, Any, Optional
 from cwl_utils.parser import load_document_by_uri
 from cwl_utils.parser.cwl_v1_2 import CommandLineTool, CommandOutputParameter
+from pystac import Catalog, Item, Collection
 import urllib.parse
 import pystac
 
-from temp_stage_out import walk_stac_catalog as walk_stac_catalog_2
+LOGGER = logging.getLogger(__name__)
+
+
+def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
+    # Initialize catalog_data dictionary
+    catalog_data = {}
+
+    try:
+        catalog_dir = os.path.dirname(catalog_path)
+        # Read and parse the STAC catalog
+        with open(catalog_path, 'r') as f:
+            catalog_dict = json.loads(f.read())
+        catalog = Catalog.from_dict(catalog_dict)
+        LOGGER.info(f"Successfully parsed STAC catalog: {catalog.id}")
+
+        # Populate catalog metadata
+        catalog_data['id'] = catalog.id
+        catalog_data['description'] = catalog.description or ''
+        catalog_data['stac_object_type'] = catalog.STAC_OBJECT_TYPE
+        catalog_data['catalog_path'] = catalog_path
+
+        # If this is a collection, extract extent and other metadata
+        if hasattr(catalog, 'extent'):
+            catalog_data['extent'] = {
+                'spatial': {'bbox': catalog.extent.spatial.bboxes} if catalog.extent.spatial else {},
+                'temporal': {'interval': catalog.extent.temporal.intervals} if catalog.extent.temporal else {}
+            }
+
+        if hasattr(catalog, 'keywords'):
+            catalog_data['keywords'] = catalog.keywords or []
+
+        if hasattr(catalog, 'license'):
+            catalog_data['license'] = catalog.license or ''
+
+        # Validate STAC version is >= 1.1.0
+        stac_version = catalog_dict.get('stac_version', '0.0.0')
+        if not stac_version:
+            raise ValueError("STAC catalog missing version information")
+
+        # Parse version string to compare (e.g. "1.1.0" -> [1, 1, 0])
+        try:
+            version_parts = [int(x) for x in stac_version.split('.')]
+            required_parts = [1, 0, 0]  # Version 1.1.0
+
+            # Compare version parts
+            if version_parts < required_parts:
+                raise ValueError(f"STAC version {stac_version} is not supported. Required: >= 1.1.0")
+
+            LOGGER.info(f"STAC version validation passed: {stac_version}")
+
+        except ValueError as ve:
+            if "not supported" in str(ve):
+                raise ve
+            raise ValueError(f"Invalid STAC version format '{stac_version}'. Expected format: X.Y.Z")
+
+        # Extract STAC Items from the catalog (including items from collections)
+        item_links = []
+
+        # Get all child links from catalog
+        all_links = [k for k in catalog.get_links() if k.rel in ['item', 'child', 'collection'] and not k.target.startswith('http')]
+
+        LOGGER.info(f"Found {len(all_links)} total eligible links in catalog")
+        for each in all_links:
+            if os.path.isabs(each.target):
+                continue
+            each.target = os.path.join(catalog_dir, each.target)
+            debug = 1
+        for link in all_links:
+            # Check if link exists locally
+            if not os.path.exists(link.target):
+                LOGGER.warning(f"Local link file not found: {link.target}")
+                continue
+
+            # Handle different link types
+            if link.rel == 'item':
+                # Direct item link
+                item_links.append(link)
+                LOGGER.info(f"Found item link: {link.target}")
+            elif link.rel == 'child' or link.rel == 'collection':
+                # Collection link - read collection and extract items
+                try:
+                    collection = Collection.from_file(link.target)
+                    collection_item_links = list(collection.get_item_links())
+                    collection_folder = os.path.dirname(link.target)
+                    temp_item_links = [k for k in collection.get_links() if k.rel in ['item'] and not k.target.startswith('http')]
+                    for each in temp_item_links:
+                        if os.path.isabs(each.target):
+                            continue
+                        each.target = os.path.join(collection_folder, each.target)
+                    item_links.extend(temp_item_links)
+                    LOGGER.info(f"Found collection '{collection.id}' with {len(collection_item_links)} items: {link.target}")
+                except Exception as e:
+                    LOGGER.warning(f"Failed to process collection link '{link.target}': {str(e)}")
+                    continue
+            else:
+                # Other link types - log and ignore
+                LOGGER.info(f"Ignoring link of type '{link.rel}': {link.target}")
+
+        LOGGER.info(f"Total STAC Items to process: {len(item_links)}")
+        conversion_results = []
+        items = []  # List to store item metadata for catalog_data
+
+        # Process each STAC Item
+        for item_link in item_links:
+            try:
+                item = Item.from_file(item_link.target)
+
+                LOGGER.info(f"Processing STAC Item: {item.id}")
+
+                # Build item metadata for catalog_data (before any modifications)
+                item_metadata = {
+                    'id': item.id,
+                    'collection': item.collection_id,
+                    'datetime': item.datetime.isoformat() if item.datetime else None,
+                    'bbox': item.bbox,
+                    'assets': {}
+                }
+
+                # Extract asset info for catalog_data
+                for asset_name, asset in item.assets.items():
+                    item_metadata['assets'][asset_name] = {
+                        'href': asset.href,
+                        'type': asset.media_type
+                    }
+
+                # Extract key properties
+                item_metadata['properties'] = item.properties or {}
+
+                # Add to items list
+                items.append(item_metadata)
+
+                # Create directory for the item if it doesn't exist
+                item_dir = os.path.join(catalog_dir, item.id)
+                os.makedirs(item_dir, exist_ok=True)
+
+                # Update asset hrefs to be relative to the new item_dir location
+                # Get the directory where the original item.json is located
+                original_item_dir = os.path.dirname(item_link.target)
+
+                # Update each asset's href to be relative to the new item_dir
+                for asset_key, asset in item.assets.items():
+                    original_href = asset.href
+
+                    # Skip absolute URLs (http/https)
+                    if original_href.startswith(('http://', 'https://')):
+                        LOGGER.info(f"  Skipping remote asset: {original_href}")
+                        continue
+
+                    # Resolve the asset's absolute path from the original item location
+                    if os.path.isabs(original_href):
+                        # Already absolute path
+                        asset_absolute_path = original_href
+                    else:
+                        # Relative path - resolve from original item.json location
+                        asset_absolute_path = os.path.abspath(
+                            os.path.join(original_item_dir, original_href)
+                        )
+
+                    # Calculate new relative path from item_dir to the asset
+                    new_relative_href = os.path.relpath(asset_absolute_path, item_dir)
+
+                    # Update the asset href
+                    asset.href = new_relative_href
+                    LOGGER.info(f"  Updated asset '{asset_key}': {original_href} -> {new_relative_href}")
+
+                # Generate <item_id>.met.json with complete STAC Item metadata
+                met_path = os.path.join(item_dir, f"{item.id}.met.json")
+                with open(met_path, 'w') as met_file:
+                    json.dump(item.to_dict(), met_file, indent=2)
+                LOGGER.info(f"Created metadata file: {met_path}")
+
+                # Generate <item_id>.dataset.json with HySDS dataset configuration
+                dataset_config = {
+                    "version": "v1.0",
+                    "dataset_type": item.collection_id if item.collection_id else "unknown-collection",
+                    "label": item.properties.get("title", item.id)
+                }
+
+                dataset_path = os.path.join(item_dir, f"{item.id}.dataset.json")
+                with open(dataset_path, 'w') as dataset_file:
+                    json.dump(dataset_config, dataset_file, indent=2)
+                LOGGER.info(f"Created dataset file: {dataset_path}")
+
+                conversion_results.append({
+                    "item_id": item.id,
+                    "status": "success",
+                    "met_file": met_path,
+                    "dataset_file": dataset_path
+                })
+
+            except Exception as item_error:
+                error_msg = f"Failed to process STAC Item '{item.id}': {str(item_error)}"
+                LOGGER.exception(f"ERROR: {error_msg}")
+                conversion_results.append({
+                    "item_id": item.id,
+                    "status": "error",
+                    "error": error_msg
+                })
+                continue
+
+        # Summary of conversion results
+        successful = len([r for r in conversion_results if r["status"] == "success"])
+        failed = len([r for r in conversion_results if r["status"] == "error"])
+
+        LOGGER.info(f"\nConversion Summary:")
+        LOGGER.info(f"  Total Items: {len(item_links)}")
+        LOGGER.info(f"  Successful: {successful}")
+        LOGGER.info(f"  Failed: {failed}")
+
+        if failed > 0:
+            LOGGER.warning("\nFailed Items:")
+            for result in conversion_results:
+                if result["status"] == "error":
+                    LOGGER.warning(f"  - {result['item_id']}: {result['error']}")
+
+        # Add items list and count to catalog_data
+        catalog_data['items'] = items
+        catalog_data['item_count'] = len(items)
+
+        # Return both catalog_data and conversion_results
+        return {
+            'catalog_data': catalog_data,
+            'conversion_results': conversion_results
+        }
+
+    except Exception as catalog_error:
+        error_msg = f"Failed to process STAC catalog: {str(catalog_error)}"
+        LOGGER.exception(f"ERROR: {error_msg}")
+        raise RuntimeError(error_msg)
+
 
 def get_id_from_uri(uri):
     """Extract ID from CWL URI fragment"""
@@ -132,114 +362,6 @@ def is_stac_catalog(directory_path: str) -> bool:
     return False
 
 
-def get_item_metadata(item_path: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract metadata from a STAC Item JSON file
-
-    Args:
-        item_path: Path to STAC Item JSON file
-
-    Returns:
-        Dictionary with item metadata (id, collection, datetime, bbox, assets, properties)
-        or None if file cannot be read
-    """
-    try:
-        with open(item_path, 'r') as f:
-            item_json = json.load(f)
-
-        # Extract key fields for inventory
-        return {
-            'id': item_json.get('id'),
-            'collection': item_json.get('collection'),
-            'datetime': item_json.get('properties', {}).get('datetime'),
-            'bbox': item_json.get('bbox'),
-            'assets': item_json.get('assets', {}),
-            'properties': item_json.get('properties', {})
-        }
-    except Exception as e:
-        print(f"  Warning: Could not read item {item_path}: {e}")
-        return None
-
-
-def walk_stac_catalog(catalog_path: str) -> Dict[str, Any]:
-    """
-    Walk a STAC catalog and extract comprehensive metadata
-
-    Args:
-        catalog_path: Path to catalog.json or collection.json file
-
-    Returns:
-        Dictionary with catalog structure including all items
-    """
-    catalog_data = {}
-
-    try:
-        # Load the catalog using pystac
-        stac_object = pystac.read_file(catalog_path)
-
-        # Ensure it's a Catalog or Collection (which support get_items)
-        if not isinstance(stac_object, (pystac.Catalog, pystac.Collection)):
-            print(f"  Warning: STAC object is not a Catalog or Collection (type: {type(stac_object).__name__})")
-            return catalog_data
-
-        catalog = stac_object
-
-        catalog_data['id'] = catalog.id
-        catalog_data['description'] = catalog.description or ''
-        
-        catalog_data['stac_object_type'] = catalog.STAC_OBJECT_TYPE
-        catalog_data['catalog_path'] = catalog_path
-
-        # If this is a collection, extract extent and other metadata
-        if hasattr(catalog, 'extent'):
-            catalog_data['extent'] = {
-                'spatial': {'bbox': catalog.extent.spatial.bboxes} if catalog.extent.spatial else {},
-                'temporal': {'interval': catalog.extent.temporal.intervals} if catalog.extent.temporal else {}
-            }
-
-        if hasattr(catalog, 'keywords'):
-            catalog_data['keywords'] = catalog.keywords or []
-
-        if hasattr(catalog, 'license'):
-            catalog_data['license'] = catalog.license or ''
-
-        # Collect all items from the catalog
-        items = []
-
-        # Use pystac's get_items() to walk and collect items
-        try:
-            for item in catalog.get_items(recursive=True):
-                item_metadata = {
-                    'id': item.id,
-                    'collection': item.collection_id,
-                    'datetime': item.datetime.isoformat() if item.datetime else None,
-                    'bbox': item.bbox,
-                    'assets': {}
-                }
-
-                # Extract asset info
-                for asset_name, asset in item.assets.items():
-                    item_metadata['assets'][asset_name] = {
-                        'href': asset.href,
-                        'type': asset.media_type
-                    }
-
-                # Extract key properties
-                item_metadata['properties'] = item.properties or {}
-
-                items.append(item_metadata)
-        except Exception as e:
-            print(f"  Warning: Could not iterate items: {e}")
-
-        catalog_data['items'] = items
-        catalog_data['item_count'] = len(items)
-
-    except Exception as e:
-        print(f"  Warning: Error walking STAC catalog {catalog_path}: {e}")
-
-    return catalog_data
-
-
 def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
     """
     Extract comprehensive STAC metadata from an output directory
@@ -288,54 +410,6 @@ def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
         'license': catalog_metadata.get('license', ''),
         'items': catalog_metadata.get('items', [])
     }
-
-
-def catalog_stac_outputs(output_paths: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
-    """
-    Process Directory outputs that are STAC catalogs
-
-    Args:
-        output_paths: Dictionary of resolved output paths
-
-    Returns:
-        Dictionary mapping output names to their catalog descriptions
-    """
-    stac_catalogs = {}
-
-    for output_id, output_info in output_paths.items():
-        if output_info['is_directory'] and output_info['type'] == 'Directory':
-            directory_path = output_info['path']
-
-            if is_stac_catalog(directory_path):
-                print(f"Processing STAC catalog: {directory_path}")
-
-                try:
-                    # Try to load and validate the catalog
-                    catalog_file = None
-                    for filename in ['catalog.json', 'collection.json']:
-                        potential_path = os.path.join(directory_path, filename)
-                        if os.path.exists(potential_path):
-                            catalog_file = potential_path
-                            break
-
-                    if catalog_file:
-                        stac_object = pystac.read_file(catalog_file)
-                        if isinstance(stac_object, (pystac.Catalog, pystac.Collection)):
-                            stac_catalogs[output_id] = f"STAC {stac_object.STAC_OBJECT_TYPE}: {stac_object.description or 'No description'}"
-                            print(f"  Valid STAC catalog: {stac_object.id}")
-                        else:
-                            stac_catalogs[output_id] = f"STAC object (unexpected type: {type(stac_object).__name__})"
-                            print(f"  Warning: Unexpected STAC object type: {type(stac_object).__name__}")
-                    else:
-                        stac_catalogs[output_id] = "STAC catalog (no main catalog file found)"
-
-                except Exception as e:
-                    print(f"  Warning: Error validating STAC catalog: {e}")
-                    stac_catalogs[output_id] = f"STAC catalog (validation error: {e})"
-            else:
-                print(f"Directory output '{output_id}' is not a STAC catalog")
-
-    return stac_catalogs
 
 
 def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Dict[str, Any]:
@@ -464,16 +538,11 @@ def main():
             sys.exit(1)
 
 
-def debug_main():
-    result = stage_out_outputs('/Users/wphyo/Projects/unity/maap-cwltool-executor/example_workflow.cwl')
-    print(json.dumps(result))
-    if result['primary_output']:
-        print(f"\nPrimary output directory: {result['primary_output']}")
-    else:
-        print("\nNo outputs found")
-        sys.exit(1)
-    return
-
 if __name__ == "__main__":
-    # main()
-    debug_main()
+    main()
+
+# Sample: python stage_out.py '/Users/wphyo/Projects/unity/maap-cwltool-executor/example_workflow.cwl'
+
+# dataset_publish.py
+
+# https://hysds-core.atlassian.net/wiki/spaces/HYS/pages/199853166/Hello+Dataset-+Installation-+Github
