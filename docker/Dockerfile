@@ -1,34 +1,33 @@
-ARG BASE_IMAGE_NAME=python:3.12
+ARG BASE_IMAGE_NAME=python:3.12-slim
 FROM ${BASE_IMAGE_NAME}
 
-# Switch user to root explicitly
 USER root
-# Install dependencies and Docker CLI
+
+# Install minimal OS deps + Docker CLI (static)
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        gnupg \
-        lsb-release && \
-    mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list && \
-    apt-get update && \
-    apt-get install -y docker-ce-cli && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN mkdir /app
+        gnupg && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.0.3.tgz \
+      | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
 
 WORKDIR /app
 
-COPY --chmod=775 . /app/
+# Install Python deps first (better caching)
+RUN pip install --no-cache-dir \
+    cwltool==3.1.20250110105449 \
+    cwl_utils==0.35 \
+    PyYAML \
+    awscli \
+    pystac \
+    maap-py \
+    requests
 
-RUN pip install cwltool==3.1.20250110105449 PyYAML awscli cwl_utils==0.35 pystac maap-py  requests
-
-# copy over docker stats shim utility
+# Copy only what you need
 COPY docker_stats/docker-stats-on-exit-shim /docker-stats-on-exit-shim
-
-# copy over bash scripts for entrypoints
 COPY docker_stats/entrypoint-pge-with-stats.sh /entrypoint-pge-with-stats.sh
+COPY --chmod=775 . /app/
 
 CMD ["/bin/bash"]
