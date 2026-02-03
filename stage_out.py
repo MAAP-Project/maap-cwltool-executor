@@ -113,6 +113,7 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
         LOGGER.info(f"Total STAC Items to process: {len(item_links)}")
         conversion_results = []
         items = []  # List to store item metadata for catalog_data
+        seen_item_ids = set()  # Track seen item IDs to deduplicate
 
         # Process each STAC Item
         for item_link in item_links:
@@ -120,6 +121,13 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
                 item = Item.from_file(item_link.target)
 
                 LOGGER.info(f"Processing STAC Item: {item.id}")
+
+                # Skip duplicate items (same item referenced via multiple links)
+                if item.id in seen_item_ids:
+                    LOGGER.info(f"Skipping duplicate item: {item.id}")
+                    continue
+
+                seen_item_ids.add(item.id)
 
                 # Build item metadata for catalog_data (before any modifications)
                 item_metadata = {
