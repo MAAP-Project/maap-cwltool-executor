@@ -12,8 +12,6 @@ from pystac import Catalog, Item, Collection
 import urllib.parse
 import pystac
 
-from hysds_metadata import write_metadata_files, get_job_info
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -179,29 +177,10 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
                     asset.href = new_relative_href
                     LOGGER.info(f"  Updated asset '{asset_key}': {original_href} -> {new_relative_href}")
 
-                # Generate <item_id>.met.json with complete STAC Item metadata
-                met_path = os.path.join(item_dir, f"{item.id}.met.json")
-                with open(met_path, 'w') as met_file:
-                    json.dump(item.to_dict(), met_file, indent=2)
-                LOGGER.info(f"Created metadata file: {met_path}")
-
-                # Generate <item_id>.dataset.json with HySDS dataset configuration
-                dataset_config = {
-                    "version": "v1.0",
-                    "dataset_type": item.collection_id if item.collection_id else "unknown-collection",
-                    "label": item.properties.get("title", item.id)
-                }
-
-                dataset_path = os.path.join(item_dir, f"{item.id}.dataset.json")
-                with open(dataset_path, 'w') as dataset_file:
-                    json.dump(dataset_config, dataset_file, indent=2)
-                LOGGER.info(f"Created dataset file: {dataset_path}")
-
                 conversion_results.append({
                     "item_id": item.id,
                     "status": "success",
-                    "met_file": met_path,
-                    "dataset_file": dataset_path
+                    "item_dir": item_dir
                 })
 
             except Exception as item_error:
@@ -485,7 +464,6 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Di
                 output_dict['stac_metadata'] = stac_metadata
                 print(f"    STAC: {stac_metadata['stac_object_type']} - {stac_metadata['description']}")
                 print(f"    Items: {stac_metadata['item_count']}")
-                write_metadata_files(output_dir, stac_metadata['catalog_id'], stac_metadata, get_job_info())
 
         outputs_list.append(output_dict)
 

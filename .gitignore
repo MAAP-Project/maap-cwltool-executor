@@ -10,3 +10,4 @@ output/
 *.log
 cardamom_era5*
 
+test/files/

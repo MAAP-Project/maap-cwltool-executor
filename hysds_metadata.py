@@ -66,7 +66,8 @@ def create_dataset_metadata(
 def create_met_metadata(
     dataset_name: str,
     job_info: Dict[str, Any],
-    stac_metadata: Optional[Dict[str, Any]] = None
+    stac_metadata: Optional[Dict[str, Any]] = None,
+    creation_timestamp: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Create HySDS met.json metadata
@@ -75,54 +76,33 @@ def create_met_metadata(
         dataset_name: Name of the HySDS dataset
         job_info: Job metadata (username, algorithm_name, version, tag)
         stac_metadata: STAC catalog metadata (optional)
+        creation_timestamp: ISO format timestamp (optional, generated if not provided)
 
     Returns:
         Dictionary for met.json file
     """
+    from datetime import datetime
+
+    # Generate timestamp if not provided
+    if not creation_timestamp:
+        creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
     met_json = {
         "username": job_info.get("username", "unknown"),
         "algorithm_name": job_info.get("algorithm_name", "unknown"),
         "algorithm_version": job_info.get("algorithm_version", "unknown"),
-        "tag": job_info.get("tag", "unknown")
+        "tag": job_info.get("tag", "unknown"),
+        "creation_timestamp": creation_timestamp
     }
 
-    # If STAC metadata present, add comprehensive STAC catalog inventory
+    # If STAC metadata present, add basic STAC catalog metadata only
     if stac_metadata:
-        # Build STAC catalog summary with item inventory
+        # Build STAC catalog summary with basic metadata only (from catalog.json)
         stac_catalog_summary = {
             "id": stac_metadata.get('catalog_id'),
             "description": stac_metadata.get('description'),
-            "stac_version": stac_metadata.get('stac_version'),
-            "collections": []
+            "stac_version": stac_metadata.get('stac_version')
         }
-
-        # Group items by collection
-        collections_dict = {}
-        for item in stac_metadata.get('items', []):
-            collection_id = item.get('collection', 'uncategorized')
-            if collection_id not in collections_dict:
-                collections_dict[collection_id] = []
-            collections_dict[collection_id].append(item)
-
-        # Create collection entries with their items
-        for collection_id, items in collections_dict.items():
-            collection_entry = {
-                "id": collection_id,
-                "item_count": len(items),
-                "items": items
-            }
-
-            # Add extent info if available
-            if stac_metadata.get('extent'):
-                collection_entry["extent"] = stac_metadata.get('extent')
-
-            if stac_metadata.get('keywords'):
-                collection_entry["keywords"] = stac_metadata.get('keywords')
-
-            if stac_metadata.get('license'):
-                collection_entry["license"] = stac_metadata.get('license')
-
-            stac_catalog_summary["collections"].append(collection_entry)
 
         met_json["stac_catalog"] = stac_catalog_summary
 
@@ -133,7 +113,8 @@ def write_metadata_files(
     dataset_dir: str,
     dataset_name: str,
     stac_metadata: Optional[Dict[str, Any]],
-    job_info: Dict[str, Any]
+    job_info: Dict[str, Any],
+    creation_timestamp: Optional[str] = None
 ) -> None:
     """
     Main function to write all HySDS metadata files
@@ -143,6 +124,7 @@ def write_metadata_files(
         dataset_name: Name of the dataset (used for file naming)
         stac_metadata: STAC metadata if available
         job_info: Job metadata from _job.json
+        creation_timestamp: ISO format timestamp (optional, generated if not provided)
     """
     try:
         # Create dataset.json
@@ -155,7 +137,7 @@ def write_metadata_files(
         print(f"Created: {dataset_json_path}")
 
         # Create met.json
-        met_json = create_met_metadata(dataset_name, job_info, stac_metadata)
+        met_json = create_met_metadata(dataset_name, job_info, stac_metadata, creation_timestamp)
         met_json_path = os.path.join(dataset_dir, f"{dataset_name}.met.json")
 
         with open(met_json_path, 'w') as f:
