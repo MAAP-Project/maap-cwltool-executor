@@ -152,10 +152,26 @@ def process_single_output(primary_output, create_item_metadata=False):
     # Generate creation timestamp (ISO format with Z suffix)
     creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
-    # Use original directory name (do NOT rename)
-    dataset_name = os.path.basename(primary_output)
+    # Generate unique dataset name with timestamp
+    base_name = os.path.basename(primary_output)
+    # Remove Z suffix only (keep colons to match HySDS pattern: YYYY-MM-DDTHH:MM:SS.mmmmmm)
+    timestamp_safe = creation_timestamp.replace('Z', '')
+    dataset_name = f"{base_name}-{timestamp_safe}"
 
-    print(f"Processing output directory: {primary_output}")
+    # Create symlink to timestamped dataset directory
+    parent_dir = os.path.dirname(os.path.abspath(primary_output))
+    new_dataset_dir = os.path.join(parent_dir, dataset_name)
+    original_output_dir = os.path.abspath(primary_output)
+
+    try:
+        os.symlink(original_output_dir, new_dataset_dir)
+        primary_output = new_dataset_dir
+        print(f"Processing output directory: {primary_output}")
+        print(f"  (symlink to: {original_output_dir})")
+    except Exception as e:
+        print(f"Error creating symlink: {e}")
+        return False
+
     print(f"  Created: {creation_timestamp}")
 
     # Copy logs
@@ -189,8 +205,25 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
     # Generate creation timestamp (ISO format with Z suffix)
     creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
-    # Use original directory name (do NOT rename)
-    dataset_name = os.path.basename(output_dir)
+    # Generate unique dataset name with timestamp
+    base_name = os.path.basename(output_dir)
+    # Remove Z suffix only (keep colons to match HySDS pattern: YYYY-MM-DDTHH:MM:SS.mmmmmm)
+    timestamp_safe = creation_timestamp.replace('Z', '')
+    dataset_name = f"{base_name}-{timestamp_safe}"
+
+    # Create symlink to timestamped dataset directory
+    parent_dir = os.path.dirname(os.path.abspath(output_dir))
+    new_dataset_dir = os.path.join(parent_dir, dataset_name)
+    original_output_dir = os.path.abspath(output_dir)
+
+    try:
+        os.symlink(original_output_dir, new_dataset_dir)
+        output_dir = new_dataset_dir
+        print(f"  Created symlink: {dataset_name}")
+        print(f"  → {original_output_dir}")
+    except Exception as e:
+        print(f"  Error creating symlink: {e}")
+        return None
 
     print(f"\nProcessing output: {output_id}")
     print(f"  Directory: {output_dir}")
