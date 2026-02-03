@@ -143,9 +143,9 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
                 # Add to items list
                 items.append(item_metadata)
 
-                # Create directory for the item if it doesn't exist
+                # Calculate item directory path for relative asset href calculations
+                # (directories will be created in process_outputs.py if --create-item-metadata is enabled)
                 item_dir = os.path.join(catalog_dir, item.id)
-                os.makedirs(item_dir, exist_ok=True)
 
                 # Update asset hrefs to be relative to the new item_dir location
                 # Get the directory where the original item.json is located

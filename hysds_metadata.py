@@ -75,11 +75,18 @@ def create_met_metadata(
     Args:
         dataset_name: Name of the HySDS dataset
         job_info: Job metadata (username, algorithm_name, version, tag)
-        stac_metadata: STAC catalog metadata (optional)
+        stac_metadata: STAC catalog metadata (optional), must contain:
+            - catalog_id: Catalog identifier
+            - description: Catalog description
+            - stac_version: STAC specification version
+            - items: List of STAC items with full metadata (id, collection, datetime, bbox, assets, properties)
         creation_timestamp: ISO format timestamp (optional, generated if not provided)
 
     Returns:
-        Dictionary for met.json file
+        Dictionary for met.json file. When stac_metadata is provided, includes:
+        - Basic job metadata (username, algorithm_name, algorithm_version, tag, creation_timestamp)
+        - stac_catalog: Catalog summary with collections array grouped by collection ID,
+          including complete item inventory for search and discovery
     """
     from datetime import datetime
 
@@ -95,13 +102,53 @@ def create_met_metadata(
         "creation_timestamp": creation_timestamp
     }
 
-    # If STAC metadata present, add basic STAC catalog metadata only
+    # If STAC metadata present, add STAC catalog metadata with items organized by collection
     if stac_metadata:
-        # Build STAC catalog summary with basic metadata only (from catalog.json)
+        # Extract items list
+        items = stac_metadata.get('items', [])
+
+        # Group items by collection ID
+        collections_dict = {}
+        uncategorized_items = []
+
+        for item in items:
+            collection_id = item.get('collection')
+
+            if collection_id is None or collection_id == '':
+                # Handle items without collection
+                uncategorized_items.append(item)
+            else:
+                # Group by collection ID
+                if collection_id not in collections_dict:
+                    collections_dict[collection_id] = []
+                collections_dict[collection_id].append(item)
+
+        # Build collections array
+        collections = []
+
+        # Add regular collections (sorted alphabetically)
+        for collection_id in sorted(collections_dict.keys()):
+            collection_items = collections_dict[collection_id]
+            collections.append({
+                "id": collection_id,
+                "item_count": len(collection_items),
+                "items": collection_items
+            })
+
+        # Add uncategorized collection at the end if present
+        if uncategorized_items:
+            collections.append({
+                "id": "uncategorized",
+                "item_count": len(uncategorized_items),
+                "items": uncategorized_items
+            })
+
+        # Build STAC catalog summary with collections
         stac_catalog_summary = {
             "id": stac_metadata.get('catalog_id'),
             "description": stac_metadata.get('description'),
-            "stac_version": stac_metadata.get('stac_version')
+            "stac_version": stac_metadata.get('stac_version'),
+            "collections": collections
         }
 
         met_json["stac_catalog"] = stac_catalog_summary
