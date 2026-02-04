@@ -13,18 +13,21 @@ The system follows a job execution pipeline:
 1. **Job Context Processing** (`_context.json`) - Contains HySDS job parameters and specifications
 2. **Input Generation** (`create_inputs.py`) - Converts job context to CWL-compatible inputs
 3. **Asset Staging** (`stage_in.py`) - Downloads STAC assets using MAAP API
-4. **CWL Execution** (`dps_wrapper.sh`) - Runs cwltool with generated inputs
-5. **Output Stage-Out** (`stage_out.py`) - Discovers and processes CWL-defined outputs
-6. **Dataset Creation** (`process_outputs.py`) - Processes CWL outputs and creates HySDS-compatible datasets
+4. **Metrics Monitoring** (`monitor_docker_stats.py`) - Background process starts to collect container metrics
+5. **CWL Execution** (`dps_wrapper.sh`) - Runs cwltool with generated inputs while metrics are collected
+6. **Metrics Finalization** - Monitor stopped, final metrics written to `_docker_stats.json`
+7. **Output Stage-Out** (`stage_out.py`) - Discovers and processes CWL-defined outputs
+8. **Dataset Creation** (`process_outputs.py`) - Processes CWL outputs, creates HySDS datasets, copies logs and metrics
 
 ### Key Components
 
 - **create_inputs.py**: Parses CWL files to understand required inputs, maps HySDS job parameters to CWL format, handles STAC item localization for Directory inputs
 - **stage_in.py**: Downloads STAC item assets using maap-py library, creates local STAC catalogs with relative paths
-- **dps_wrapper.sh**: Main execution script that sets up MAAP environment, downloads CWL files from S3, executes cwltool with proper parameters
+- **dps_wrapper.sh**: Main execution script that sets up MAAP environment, downloads CWL files from S3, executes cwltool with proper parameters, manages Docker metrics collection
+- **monitor_docker_stats.py**: Background process that watches for Docker containers spawned by cwltool and collects continuous resource usage metrics (CPU, memory, network, I/O)
 - **stage_out.py**: Discovers actual output paths from CWL output definitions using glob patterns, validates and extracts metadata from STAC catalogs
 - **hysds_metadata.py**: Centralizes HySDS metadata creation logic, handles both STAC and non-STAC outputs
-- **process_outputs.py**: Processes multiple CWL outputs, creates timestamped HySDS datasets, and generates metadata files directly using hysds_metadata module
+- **process_outputs.py**: Processes multiple CWL outputs, creates timestamped HySDS datasets, generates metadata files, and copies logs and metrics to output datasets
 
 ## Dependencies
 
@@ -59,6 +62,99 @@ The system requires MAAP environment variables:
 - `MAAP_API_HOST` - MAAP API endpoint
 - `DPS_MACHINE_TOKEN` - Authentication token
 - `MAAP_PGT` - Proxy granting ticket (obtained dynamically)
+
+### Docker Metrics Collection
+
+The system automatically collects continuous resource usage metrics from Docker containers spawned by cwltool during workflow execution.
+
+#### Configuration
+- **Environment Variable**: `DOCKER_STATS_INTERVAL` (default: 30 seconds)
+- **Valid Range**: 5-300 seconds
+- **Set via**: HySDS job spec, Dockerfile ENV, or Docker run command
+
+#### How It Works
+1. **Background Monitoring** (`monitor_docker_stats.py`):
+   - Starts before cwltool execution
+   - Watches `--cidfile-dir` for new container ID files
+   - Collects metrics at configured interval using `docker stats`
+   - Writes time-series data to `_docker_stats.json`
+   - Stops gracefully after cwltool completes
+
+2. **Integration** (`dps_wrapper.sh`):
+   - Launches monitor in background before cwltool
+   - Captures monitor PID for graceful shutdown
+   - Sends SIGTERM signal on completion
+   - Ensures final metrics are written
+
+3. **Output** (`process_outputs.py`):
+   - Copies `_docker_stats.json` to each output dataset
+   - File preserved alongside `_stdout.txt` and `_stderr.txt`
+
+#### Metrics Collected
+For each Docker container:
+- **CPU**: Usage percentage over time
+- **Memory**: Usage (MB), limit (MB), percentage
+- **Network**: Received/transmitted data (MB)
+- **Block I/O**: Read/write operations (MB)
+- **Timestamps**: UTC timestamps for each sample
+
+#### Output Format
+`_docker_stats.json` contains:
+```json
+{
+  "config": {
+    "sampling_interval_seconds": 30,
+    "start_time": "2026-02-04T12:00:00Z",
+    "end_time": "2026-02-04T12:10:00Z"
+  },
+  "containers": [
+    {
+      "container_id": "9a24e0e88f1d...",
+      "container_name": "...",
+      "cidfile": "20260204120000-123456.cid",
+      "image": "ghcr.io/...",
+      "metrics": [
+        {
+          "timestamp": "2026-02-04T12:00:00Z",
+          "cpu_percent": 15.3,
+          "memory_usage_mb": 1024.5,
+          "memory_limit_mb": 4096.0,
+          "memory_percent": 25.0,
+          "network_rx_mb": 12.3,
+          "network_tx_mb": 5.6,
+          "block_read_mb": 100.2,
+          "block_write_mb": 50.1
+        }
+      ],
+      "summary": {
+        "duration_seconds": 600,
+        "samples_collected": 20,
+        "cpu_percent_avg": 32.5,
+        "cpu_percent_max": 85.2,
+        "memory_mb_avg": 1450.3,
+        "memory_mb_max": 2048.7
+      }
+    }
+  ],
+  "summary_all_containers": {
+    "total_containers": 1,
+    "cpu_percent_max_across_all": 85.2,
+    "memory_mb_max_across_all": 2048.7,
+    "network_total_rx_mb": 245.6,
+    "network_total_tx_mb": 112.3
+  }
+}
+```
+
+#### Error Handling
+- **Non-Critical**: Metrics collection failures do NOT fail the job
+- **Graceful Degradation**: Job proceeds without metrics if monitor fails
+- **Partial Collection**: Available metrics are written even if some containers exit
+
+#### Integration with HySDS
+- HySDS automatically processes `_docker_stats.json` from the job directory
+- Metrics are incorporated into HySDS job metadata (`_job.json`)
+- Available in HySDS metrics dashboards and reporting tools
 
 ## CWL Input Types
 

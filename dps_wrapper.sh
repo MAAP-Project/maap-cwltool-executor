@@ -16,9 +16,22 @@ CWL_FILE=$(basename "$CWL_FILE")
 # Create inputs.yml from hysds context for input to cwltool command
 python /app/create_inputs.py $CWL_FILE
 
+# Start background Docker metrics monitoring
+DOCKER_STATS_INTERVAL=${DOCKER_STATS_INTERVAL:-30}
+echo "=== Starting Docker Metrics Monitor (interval: ${DOCKER_STATS_INTERVAL}s) ==="
+python /app/monitor_docker_stats.py $PWD $DOCKER_STATS_INTERVAL &
+MONITOR_PID=$!
+echo "Monitor started with PID: $MONITOR_PID"
+
 cwltool --disable-color --no-read-only --no-match-user --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
         --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
-        ${CWL_FILE} inputs.yml || (cp _stderr.txt _alt_traceback.txt && exit 1)
+        ${CWL_FILE} inputs.yml || (kill -TERM $MONITOR_PID 2>/dev/null; cp _stderr.txt _alt_traceback.txt && exit 1)
+
+# Stop metrics monitoring gracefully
+echo "=== Stopping Docker Metrics Monitor ==="
+kill -TERM $MONITOR_PID 2>/dev/null
+wait $MONITOR_PID 2>/dev/null || true
+echo "Monitor stopped"
 
 # Stage out: discover all CWL outputs with metadata
 echo "=== Starting Stage Out Process ==="

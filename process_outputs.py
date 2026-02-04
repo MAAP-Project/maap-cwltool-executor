@@ -249,13 +249,13 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
 
 def copy_logs(output_dir):
     """
-    Copy standard output/error logs to output directory
+    Copy standard output/error logs and Docker metrics to output directory
 
     Args:
         output_dir: Path to output directory
     """
     try:
-        log_files = ['_stdout.txt', '_stderr.txt']
+        log_files = ['_stdout.txt', '_stderr.txt', '_docker_stats.json']
         for log_file in log_files:
             if os.path.exists(log_file):
                 dest_path = os.path.join(output_dir, log_file)
