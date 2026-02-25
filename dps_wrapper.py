@@ -1,33 +1,43 @@
 import sys
 import json
 import os
+import hysds_metadata
 
 
-def get_info_from_job():
-    with open("_job.json") as fr:
-        job = json.loads(fr.read())
-        username = job.get("username", "null")
-        job_type_info = str(job.get("type")).split(":")  # example job-s1_orbit_crawler:release-20190313
-        algo_name = job_type_info[0].replace("job-", "")
-        algo_version = job_type_info[1]
-        tag = job.get("tag", "null-tag")
-        return {"username": username, "algorithm_name": algo_name, "algorithm_version": algo_version, "tag": tag}
+def load_stac_metadata(dataset_dir):
+    """
+    Load STAC metadata if available
 
+    Args:
+        dataset_dir: Path to the dataset directory
 
-def generate_dataset_file(dataset_name):
-    datasets_file_name = "{}.dataset.json".format(dataset_name)
-    with open(os.path.join(dataset_name, datasets_file_name), 'w') as fw:
-        fw.write(json.dumps({"version": "v1.0"}))
-
-
-def generate_met_file(dataset_name):
-    met_file_name = "{}.met.json".format(dataset_name)
-    with open(os.path.join(dataset_name, met_file_name), 'w') as fw:
-        fw.write(json.dumps(get_info_from_job()))
+    Returns:
+        STAC metadata dict or None if not available
+    """
+    metadata_file = os.path.join(dataset_dir, ".stac_metadata.json")
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load STAC metadata: {e}")
+    return None
 
 
 if __name__ == '__main__':
     dataset_name = sys.argv[1]
-    generate_dataset_file(dataset_name)
-    generate_met_file(dataset_name)
+
+    # Get job metadata
+    job_info = hysds_metadata.get_job_info()
+
+    # Try to load STAC metadata if available
+    stac_metadata = load_stac_metadata(dataset_name)
+
+    # Create HySDS metadata files
+    hysds_metadata.write_metadata_files(
+        dataset_dir=dataset_name,
+        dataset_name=dataset_name,
+        stac_metadata=stac_metadata,
+        job_info=job_info
+    )
 

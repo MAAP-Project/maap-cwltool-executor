@@ -20,18 +20,10 @@ cwltool --disable-color --no-read-only --no-match-user --preserve-environment MA
         --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
         ${CWL_FILE} inputs.yml || (cp _stderr.txt _alt_traceback.txt && exit 1)
 
-USER_OUTPUT_DIR="output"
+# Stage out: discover all CWL outputs with metadata
+echo "=== Starting Stage Out Process ==="
+python /app/stage_out.py ${CWL_FILE} --json-output > /tmp/stage_out_result.json
 
-DIRNAME=$(date +"%Y-%m-%dT%H:%M:%S.%6N")
-DATASET_NAME="output-$DIRNAME"
-
-if [ ! -d ${USER_OUTPUT_DIR} ]; then
-    mkdir -p ${USER_OUTPUT_DIR}
-fi
-
-cp -v _std* ${USER_OUTPUT_DIR}/
-
-mv ${USER_OUTPUT_DIR} ${DATASET_NAME}
-
-python /app/dps_wrapper.py ${DATASET_NAME}
+# Process outputs using Python to handle multiple outputs
+python /app/process_outputs.py /tmp/stage_out_result.json
 
