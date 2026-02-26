@@ -178,11 +178,10 @@ def map_inputs_from_context(job_inputs: dict, cwl_inputs: [CommandInputParameter
 
         if base_type == "Directory":
             print("Encountered STAC input, localizing assets.")
-            # STAC Item json is assumed to have been downloaded by hysds
-            # stac_item_file = os.path.basename(job_inputs.get(input_name))
-            stac_item_json = load_json_from_uri(job_inputs.get(input_name))
+            # STAC input can be either a Feature (STAC Item) or FeatureCollection (STAC Collection)
+            stac_json = load_json_from_uri(job_inputs.get(input_name))
             output_dir = str(pathlib.Path(input_name).resolve())
-            stage_in.download_stac_item_assets_from_json(stac_item_json, output_dir)
+            stage_in.download_stac_assets_from_json(stac_json, output_dir)
             workflow_inputs[input_name] = {"class": "Directory", "path": output_dir}
         elif base_type == "File":
             filepath = pathlib.Path(os.path.basename(job_inputs.get(input_name)))
