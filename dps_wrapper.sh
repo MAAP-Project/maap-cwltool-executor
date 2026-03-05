@@ -18,7 +18,7 @@ python /app/create_inputs.py $CWL_FILE
 
 cwltool --disable-color --no-read-only --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
         --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
-        ${CWL_FILE} inputs.yml || (cp _stderr.txt _alt_traceback.txt && exit 1)
+        ${CWL_FILE} inputs.yml || (tail -n 20 _stderr.txt > _alt_traceback.txt && exit 1)
 
 # Stage out: discover all CWL outputs with metadata
 echo "=== Starting Stage Out Process ==="
