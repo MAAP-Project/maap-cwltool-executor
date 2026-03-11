@@ -149,12 +149,14 @@ def process_single_output(primary_output, create_item_metadata=False):
         print("No output directory found")
         return False
 
-    # Generate creation timestamp
-    creation_timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
+    # Generate timestamps: compact for dir name, ISO 8601 for metadata/ES
+    now = datetime.now(timezone.utc)
+    dir_timestamp = now.strftime('%Y%m%dT%H%M%S%f')
+    metadata_timestamp = now.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
     # Generate unique dataset name with compact timestamp
     base_name = os.path.basename(primary_output)
-    dataset_name = f"{base_name}-{creation_timestamp}"
+    dataset_name = f"{base_name}-{dir_timestamp}"
 
     # Create symlink to timestamped dataset directory
     parent_dir = os.path.dirname(os.path.abspath(primary_output))
@@ -170,13 +172,13 @@ def process_single_output(primary_output, create_item_metadata=False):
         print(f"Error creating symlink: {e}")
         return False
 
-    print(f"  Created: {creation_timestamp}")
+    print(f"  Created: {metadata_timestamp}")
 
     # Copy logs
     copy_logs(primary_output)
 
     # Create HySDS metadata (without STAC)
-    create_hysds_metadata(primary_output, None, creation_timestamp)
+    create_hysds_metadata(primary_output, None, metadata_timestamp)
 
     return True
 
@@ -200,12 +202,14 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
         print(f"Output directory not found: {output_dir}")
         return None
 
-    # Generate creation timestamp
-    creation_timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
+    # Generate timestamps: compact for dir name, ISO 8601 for metadata/ES
+    now = datetime.now(timezone.utc)
+    dir_timestamp = now.strftime('%Y%m%dT%H%M%S%f')
+    metadata_timestamp = now.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
     # Generate unique dataset name using CWL output ID + compact timestamp
     base_name = output_id or os.path.basename(output_dir)
-    dataset_name = f"{base_name}-{creation_timestamp}"
+    dataset_name = f"{base_name}-{dir_timestamp}"
 
     # Create symlink to timestamped dataset directory
     parent_dir = os.path.dirname(os.path.abspath(output_dir))
@@ -223,7 +227,7 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
 
     print(f"\nProcessing output: {output_id}")
     print(f"  Directory: {output_dir}")
-    print(f"  Created: {creation_timestamp}")
+    print(f"  Created: {metadata_timestamp}")
 
     if stac_metadata:
         print(f"  STAC Catalog: {stac_metadata.get('catalog_id')}")
@@ -232,13 +236,13 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
     # Copy logs to output directory
     copy_logs(output_dir)
 
-    # Create HySDS metadata (per-output) with timestamp
-    create_hysds_metadata(output_dir, stac_metadata, creation_timestamp)
+    # Create HySDS metadata (per-output) with ISO timestamp for ES compatibility
+    create_hysds_metadata(output_dir, stac_metadata, metadata_timestamp)
 
     # Create per-item metadata if STAC and flag is enabled
     if stac_metadata and create_item_metadata:
         job_info = hysds_metadata.get_job_info()
-        create_per_item_metadata(output_dir, stac_metadata, job_info, creation_timestamp)
+        create_per_item_metadata(output_dir, stac_metadata, job_info, metadata_timestamp)
 
     return dataset_name
 

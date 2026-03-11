@@ -88,11 +88,11 @@ def create_met_metadata(
         - stac_catalog: Catalog summary with collections array grouped by collection ID,
           including complete item inventory for search and discovery
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     # Generate timestamp if not provided
     if not creation_timestamp:
-        creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+        creation_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
     met_json = {
         "username": job_info.get("username", "unknown"),
