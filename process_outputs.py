@@ -11,7 +11,7 @@ import json
 import os
 import shutil
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import hysds_metadata
 
 
@@ -149,14 +149,12 @@ def process_single_output(primary_output, create_item_metadata=False):
         print("No output directory found")
         return False
 
-    # Generate creation timestamp (ISO format with Z suffix)
-    creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    # Generate creation timestamp
+    creation_timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
 
-    # Generate unique dataset name with timestamp
+    # Generate unique dataset name with compact timestamp
     base_name = os.path.basename(primary_output)
-    # Remove Z suffix only (keep colons to match HySDS pattern: YYYY-MM-DDTHH:MM:SS.mmmmmm)
-    timestamp_safe = creation_timestamp.replace('Z', '')
-    dataset_name = f"{base_name}-{timestamp_safe}"
+    dataset_name = f"{base_name}-{creation_timestamp}"
 
     # Create symlink to timestamped dataset directory
     parent_dir = os.path.dirname(os.path.abspath(primary_output))
@@ -202,14 +200,12 @@ def process_single_output_with_metadata(output_info, create_item_metadata=False)
         print(f"Output directory not found: {output_dir}")
         return None
 
-    # Generate creation timestamp (ISO format with Z suffix)
-    creation_timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    # Generate creation timestamp
+    creation_timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')
 
-    # Generate unique dataset name with timestamp
-    base_name = os.path.basename(output_dir)
-    # Remove Z suffix only (keep colons to match HySDS pattern: YYYY-MM-DDTHH:MM:SS.mmmmmm)
-    timestamp_safe = creation_timestamp.replace('Z', '')
-    dataset_name = f"{base_name}-{timestamp_safe}"
+    # Generate unique dataset name using CWL output ID + compact timestamp
+    base_name = output_id or os.path.basename(output_dir)
+    dataset_name = f"{base_name}-{creation_timestamp}"
 
     # Create symlink to timestamped dataset directory
     parent_dir = os.path.dirname(os.path.abspath(output_dir))
