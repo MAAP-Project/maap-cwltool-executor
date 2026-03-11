@@ -18,11 +18,12 @@ python /app/create_inputs.py $CWL_FILE
 
 cwltool --disable-color --no-read-only --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
         --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
+        --write-summary ${PWD}/cwl_summary.json \
         ${CWL_FILE} inputs.yml || (tail -n 20 _stderr.txt > _alt_traceback.txt && exit 1)
 
 # Stage out: discover all CWL outputs with metadata
 echo "=== Starting Stage Out Process ==="
-python /app/stage_out.py ${CWL_FILE} --json-output > /tmp/stage_out_result.json
+python /app/stage_out.py ${CWL_FILE} --json-output --cwl-summary ${PWD}/cwl_summary.json > /tmp/stage_out_result.json
 
 # Process outputs using Python to handle multiple outputs
 python /app/process_outputs.py /tmp/stage_out_result.json

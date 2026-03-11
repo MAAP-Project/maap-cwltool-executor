@@ -331,6 +331,59 @@ def resolve_output_paths(cwl_outputs: List[CommandOutputParameter]) -> Dict[str,
     return output_paths
 
 
+def parse_cwl_summary(summary_file_path: str) -> Dict[str, Dict[str, Any]]:
+    """
+    Parse cwltool --write-summary JSON output to extract output paths and metadata.
+
+    Replaces the need for parse_cwl_outputs() + resolve_output_paths() when
+    the cwltool summary is available.
+
+    Args:
+        summary_file_path: Path to the cwltool summary JSON file
+
+    Returns:
+        Dictionary mapping output IDs to their resolved paths and metadata,
+        in the same format as resolve_output_paths():
+        {output_id: {'path': str, 'type': str, 'is_directory': bool}}
+    """
+    LOGGER.info(f"Parsing cwltool summary: {summary_file_path}")
+
+    with open(summary_file_path, 'r') as f:
+        summary = json.load(f)
+
+    output_paths = {}
+
+    for output_id, output_data in summary.items():
+        output_class = output_data.get('class', 'File')
+        output_path = output_data.get('path')
+
+        if not output_path:
+            # Fall back to extracting path from location URI
+            location = output_data.get('location', '')
+            if location.startswith('file://'):
+                output_path = location[len('file://'):]
+
+        if not output_path:
+            LOGGER.warning(f"No path found for output '{output_id}', skipping")
+            continue
+
+        if not os.path.exists(output_path):
+            LOGGER.warning(f"Output path does not exist: {output_path}")
+            continue
+
+        is_directory = output_class == 'Directory'
+
+        LOGGER.info(f"  {output_id}: {output_path} ({output_class})")
+        output_paths[output_id] = {
+            'path': output_path,
+            'type': output_class,
+            'is_directory': is_directory
+        }
+
+    LOGGER.info(f"Parsed {len(output_paths)} output(s) from cwltool summary")
+    return output_paths
+
+
 def is_stac_catalog(directory_path: str) -> bool:
     """
     Check if a directory contains a STAC catalog
@@ -411,13 +464,14 @@ def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Dict[str, Any]:
+def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output", summary_file: Optional[str] = None) -> Dict[str, Any]:
     """
     Main stage-out function that discovers and processes CWL outputs
 
     Args:
         cwl_file_path: Path to the CWL file
         base_output_dir: Base output directory name (fallback)
+        summary_file: Path to cwltool --write-summary JSON (optional, preferred over CWL parsing)
 
     Returns:
         Dictionary with:
@@ -428,25 +482,33 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output") -> Di
     LOGGER.info(f"CWL file: {cwl_file_path}")
     LOGGER.info(f"Fallback output dir: {base_output_dir}")
 
-    # Parse CWL outputs
-    cwl_outputs = parse_cwl_outputs(cwl_file_path)
-
     outputs_list = []
 
-    if not cwl_outputs:
-        LOGGER.warning("No CWL outputs found, falling back to default behavior")
-        if os.path.exists(base_output_dir):
+    # Use cwltool summary if available, otherwise fall back to CWL parsing
+    if summary_file and os.path.exists(summary_file):
+        LOGGER.info(f"Using cwltool summary: {summary_file}")
+        output_paths = parse_cwl_summary(summary_file)
+    else:
+        if summary_file:
+            LOGGER.warning(f"Summary file not found: {summary_file}, falling back to CWL parsing")
+
+        # Parse CWL outputs
+        cwl_outputs = parse_cwl_outputs(cwl_file_path)
+
+        if not cwl_outputs:
+            LOGGER.warning("No CWL outputs found, falling back to default behavior")
+            if os.path.exists(base_output_dir):
+                return {
+                    'outputs': [],
+                    'primary_output': base_output_dir
+                }
             return {
                 'outputs': [],
-                'primary_output': base_output_dir
+                'primary_output': None
             }
-        return {
-            'outputs': [],
-            'primary_output': None
-        }
 
-    # Resolve actual output paths
-    output_paths = resolve_output_paths(cwl_outputs)
+        # Resolve actual output paths
+        output_paths = resolve_output_paths(cwl_outputs)
 
     if not output_paths:
         LOGGER.warning("No output files found, falling back to default behavior")
@@ -522,13 +584,18 @@ def main():
         action="store_true",
         help="Output results as JSON"
     )
+    parser.add_argument(
+        "--cwl-summary",
+        default=None,
+        help="Path to cwltool --write-summary JSON output (preferred over CWL parsing)"
+    )
 
     args = parser.parse_args()
 
     # Set JSON output mode flag early
     _JSON_OUTPUT_MODE = args.json_output
 
-    result = stage_out_outputs(args.cwl_file, args.base_output_dir)
+    result = stage_out_outputs(args.cwl_file, args.base_output_dir, summary_file=args.cwl_summary)
 
     if args.json_output:
         # Output in JSON format for shell script consumption (to stdout only)
