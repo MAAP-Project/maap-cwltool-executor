@@ -31,6 +31,8 @@ def _download_single_item(item_json_data, output_dir, parent_container):
         bbox=item.bbox,
         datetime=item.datetime,
         properties=item.properties,
+        stac_extensions=item.stac_extensions,
+        extra_fields=item.extra_fields,
     )
     local_item.set_self_href(str(pathlib.Path(item_dir).resolve()))
 
@@ -43,7 +45,14 @@ def _download_single_item(item_json_data, output_dir, parent_container):
             dest = maap.downloadGranule(online_access_url=href, destination_path=os.path.dirname(item_dir),
                                         overwrite=True)
             print("Download complete")
-            local_asset = pystac.Asset(href=f"{os.path.basename(dest)}", media_type=asset.media_type)
+            local_asset = pystac.Asset(
+                href=os.path.basename(dest),
+                media_type=asset.media_type,
+                title=asset.title,
+                description=asset.description,
+                roles=asset.roles,
+                extra_fields=asset.extra_fields,
+            )
             local_item.add_asset(asset_key, local_asset)
         except Exception as e:
             print(f"    Error downloading {asset_key}: {e}")
