@@ -361,9 +361,201 @@ class TestSingleItemDownload:
         mock_download.assert_not_called()
 
 
+class TestStacMetadataPreservation:
+    """Test preservation of STAC metadata during item cloning and local staging."""
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_extra_fields_preserved(self, mock_download, tmp_path):
+        """Extra fields (non-standard STAC properties) should be preserved via clone() and explicit update."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            },
+            "custom_field": "custom_value",
+            "another_custom": {"nested": "object"}
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        # Extra fields should be preserved in the returned item
+        assert result.extra_fields.get("custom_field") == "custom_value"
+        assert result.extra_fields.get("another_custom") == {"nested": "object"}
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_extra_fields_survive_serialization(self, mock_download, tmp_path):
+        """Extra fields should survive to_dict() serialization for JSON output."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            },
+            "custom_field": "custom_value",
+            "license": "CC-BY-4.0"
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        # When serialized to dict, extra_fields should be present at top level
+        result_dict = result.to_dict()
+        assert result_dict.get("custom_field") == "custom_value"
+        assert result_dict.get("license") == "CC-BY-4.0"
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_stac_extensions_preserved(self, mock_download, tmp_path):
+        """stac_extensions list should be preserved during clone."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "stac_extensions": [
+                "https://stac-extensions.github.io/eo/v1.0.0/schema.json",
+                "https://stac-extensions.github.io/sar/v0.9.0/schema.json"
+            ],
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            }
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        assert result.stac_extensions == [
+            "https://stac-extensions.github.io/eo/v1.0.0/schema.json",
+            "https://stac-extensions.github.io/sar/v0.9.0/schema.json"
+        ]
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_stac_extensions_empty_list_preserved(self, mock_download, tmp_path):
+        """Empty stac_extensions list should be preserved."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "stac_extensions": [],
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            }
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        assert result.stac_extensions == []
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_original_item_dict_not_mutated(self, mock_download, tmp_path):
+        """The input item_json dict should not be mutated by clone()."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        original_href = "https://example.com/data.tif"
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": original_href, "type": "image/tiff"}
+            }
+        }
+
+        parent_container = Mock()
+        _download_single_item(item_json, str(tmp_path), parent_container)
+
+        # Input dict should retain original remote href
+        assert item_json["assets"]["data"]["href"] == original_href
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_links_cleared_and_self_href_reset(self, mock_download, tmp_path):
+        """Remote links should be cleared and replaced with local self href."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [
+                {"rel": "self", "href": "https://example.com/item.json", "type": "application/json"},
+                {"rel": "parent", "href": "https://example.com/parent.json", "type": "application/json"}
+            ],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            }
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        # After clear_links() and set_self_href(), only one self link should remain pointing locally
+        assert len(result.links) == 1
+        assert result.links[0].rel == "self"
+        assert "example.com" not in result.links[0].target
+
+    @patch('stage_in.maap.downloadGranule')
+    def test_self_href_set_to_local_path(self, mock_download, tmp_path):
+        """Self href should be set to the resolved absolute path of <output_dir>/<item.id>."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+
+        item_json = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item-meta",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2023-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {"href": "https://example.com/data.tif", "type": "image/tiff"}
+            }
+        }
+
+        parent_container = Mock()
+        result = _download_single_item(item_json, str(tmp_path), parent_container)
+
+        expected_self_href = str((tmp_path / "test-item-meta").resolve())
+        actual_self_href = result.get_self_href()
+        assert actual_self_href == expected_self_href
+
+
 class TestSingleItemCatalogAssembly:
     """Test download_stac_item_assets_from_json() catalog assembly."""
-    
+
     @patch('stage_in.maap.downloadGranule')
     @patch('pystac.Catalog.save')
     def test_output_directory_created(self, mock_save, mock_download, tmp_path):

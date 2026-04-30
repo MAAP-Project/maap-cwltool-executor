@@ -25,17 +25,15 @@ def _download_single_item(item_json_data, output_dir, parent_container):
     item_dir = os.path.join(output_dir, item.id)
     os.makedirs(item_dir, exist_ok=True)
 
-    local_item = pystac.Item(
-        id=item.id,
-        geometry=item.geometry,
-        bbox=item.bbox,
-        datetime=item.datetime,
-        properties=item.properties,
-    )
+    # Deep-copy the item so all metadata (extra_fields, stac_extensions, etc.) is preserved,
+    # then replace remote links/hrefs with local paths.
+    local_item = item.clone()
+    # pystac.clone() preserves stac_extensions but not extra_fields, so restore them explicitly
+    local_item.extra_fields.update(item.extra_fields)
+    local_item.clear_links()
     local_item.set_self_href(str(pathlib.Path(item_dir).resolve()))
 
     print(f"Downloading assets for item: {item.id}")
-    # Download each asset
     for asset_key, asset in item.assets.items():
         href = asset.href
         print(f"  Downloading asset '{asset_key}': {os.path.basename(href)}")
@@ -43,10 +41,10 @@ def _download_single_item(item_json_data, output_dir, parent_container):
             dest = maap.downloadGranule(online_access_url=href, destination_path=os.path.dirname(item_dir),
                                         overwrite=True)
             print("Download complete")
-            local_asset = pystac.Asset(href=f"{os.path.basename(dest)}", media_type=asset.media_type)
-            local_item.add_asset(asset_key, local_asset)
+            local_item.assets[asset_key].href = os.path.basename(dest)
         except Exception as e:
             print(f"    Error downloading {asset_key}: {e}")
+            local_item.assets.pop(asset_key, None)
 
     local_item.make_asset_hrefs_relative()
     parent_container.add_item(local_item)
