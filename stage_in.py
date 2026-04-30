@@ -28,6 +28,8 @@ def _download_single_item(item_json_data, output_dir, parent_container):
     # Deep-copy the item so all metadata (extra_fields, stac_extensions, etc.) is preserved,
     # then replace remote links/hrefs with local paths.
     local_item = item.clone()
+    # pystac.clone() preserves stac_extensions but not extra_fields, so restore them explicitly
+    local_item.extra_fields.update(item.extra_fields)
     local_item.clear_links()
     local_item.set_self_href(str(pathlib.Path(item_dir).resolve()))
 
