@@ -15,6 +15,7 @@ from stage_in import (
     download_stac_assets_from_json,
     _build_collection,
     _download_single_item,
+    _download_asset,
     download_stac_item_assets_from_json,
     download_stac_collection_assets_from_json,
     main
@@ -827,3 +828,47 @@ class TestMainEntryPoint:
         call_args = mock_dispatch.call_args
         assert call_args[0][0] == collection_json
         assert call_args[1]['output_dir'] == str(tmp_path / "output")
+
+
+class TestAssetRouting:
+    """Test _download_asset() routes to boto3 vs maap.downloadGranule based on URL."""
+
+    @patch('stage_in.boto3')
+    @patch('stage_in.maap')
+    def test_maap_s3_url_uses_boto3(self, mock_maap, mock_boto3, tmp_path):
+        href = "s3://maap-data-store/path/to/file.tif"
+        mock_s3 = MagicMock()
+        mock_boto3.client.return_value = mock_s3
+        mock_s3.download_file.side_effect = lambda b, k, d: open(d, 'w').close()
+
+        dest = _download_asset(href, str(tmp_path))
+
+        mock_boto3.client.assert_called_once_with("s3")
+        mock_s3.download_file.assert_called_once_with("maap-data-store", "path/to/file.tif", str(tmp_path / "file.tif"))
+        mock_maap.downloadGranule.assert_not_called()
+        assert dest == str(tmp_path / "file.tif")
+
+    @patch('stage_in.boto3')
+    @patch('stage_in.maap')
+    def test_daac_url_uses_maap_download_granule(self, mock_maap, mock_boto3):
+        href = "https://daac.gsfc.nasa.gov/data/file.tif"
+        mock_maap.downloadGranule.return_value = "/local/file.tif"
+
+        dest = _download_asset(href, "/local")
+
+        mock_maap.downloadGranule.assert_called_once_with(
+            online_access_url=href, destination_path="/local", overwrite=True
+        )
+        mock_boto3.client.assert_not_called()
+        assert dest == "/local/file.tif"
+
+    @patch('stage_in.boto3')
+    @patch('stage_in.maap')
+    def test_non_maap_s3_url_falls_through_to_maap(self, mock_maap, mock_boto3):
+        href = "s3://some-other-bucket/data/file.tif"
+        mock_maap.downloadGranule.return_value = "/local/file.tif"
+
+        _download_asset(href, "/local")
+
+        mock_maap.downloadGranule.assert_called_once()
+        mock_boto3.client.assert_not_called()

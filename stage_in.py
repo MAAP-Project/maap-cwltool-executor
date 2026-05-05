@@ -3,10 +3,27 @@ import os
 import json  # Import the json library
 import argparse
 import pathlib
+import boto3
 from datetime import datetime
 from maap.maap import MAAP
 
 maap = MAAP()
+
+
+def _download_asset(href, destination_path):
+    """Route asset download: MAAP S3 buckets use boto3, everything else uses maap.downloadGranule."""
+    if href.startswith("s3://maap-"):
+        parts = href[5:].split("/", 1)
+        bucket, key = parts[0], parts[1]
+        filename = os.path.basename(key)
+        dest = os.path.join(destination_path, filename)
+        boto3.client("s3").download_file(bucket, key, dest)
+        return dest
+    return maap.downloadGranule(
+        online_access_url=href,
+        destination_path=destination_path,
+        overwrite=True,
+    )
 
 
 def _download_single_item(item_json_data, output_dir, parent_container):
@@ -38,8 +55,7 @@ def _download_single_item(item_json_data, output_dir, parent_container):
         href = asset.href
         print(f"  Downloading asset '{asset_key}': {os.path.basename(href)}")
         try:
-            dest = maap.downloadGranule(online_access_url=href, destination_path=os.path.dirname(item_dir),
-                                        overwrite=True)
+            dest = _download_asset(href, os.path.dirname(item_dir))
             print("Download complete")
             local_item.assets[asset_key].href = os.path.basename(dest)
         except Exception as e:
