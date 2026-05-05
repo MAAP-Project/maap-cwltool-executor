@@ -88,7 +88,6 @@ def extract_stac_catalog_metadata(catalog_path: str, file_map: Optional[Dict[str
             if os.path.isabs(each.target):
                 continue
             each.target = os.path.join(catalog_dir, each.target)
-            debug = 1
         for link in all_links:
             # Check if link exists locally
             if not os.path.exists(link.target):
@@ -127,6 +126,7 @@ def extract_stac_catalog_metadata(catalog_path: str, file_map: Optional[Dict[str
 
         # Process each STAC Item
         for item_link in item_links:
+            item = None
             try:
                 item = Item.from_file(item_link.target)
 
@@ -199,14 +199,15 @@ def extract_stac_catalog_metadata(catalog_path: str, file_map: Optional[Dict[str
                 conversion_results.append({
                     "item_id": item.id,
                     "status": "success",
-                    "item_dir": item_dir
+                    "item_dir": original_item_dir
                 })
 
             except Exception as item_error:
-                error_msg = f"Failed to process STAC Item '{item.id}': {str(item_error)}"
+                item_id = item.id if item is not None else item_link.target
+                error_msg = f"Failed to process STAC Item '{item_id}': {str(item_error)}"
                 LOGGER.exception(f"ERROR: {error_msg}")
                 conversion_results.append({
-                    "item_id": item.id,
+                    "item_id": item_id,
                     "status": "error",
                     "error": error_msg
                 })
@@ -464,7 +465,7 @@ def extract_stac_metadata(output_dir: str, file_map: Optional[Dict[str, str]] = 
             data = json.load(f)
             if 'type' not in data or data['type'] not in ['Catalog', 'Collection']:
                 return None
-    except:
+    except Exception:
         return None
 
     # Walk the catalog and extract metadata
