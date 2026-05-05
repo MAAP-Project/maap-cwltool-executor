@@ -25,7 +25,7 @@ LOGGER = logging.getLogger(__name__)
 _JSON_OUTPUT_MODE = False
 
 
-def walk_stac_catalog_2(catalog_path: str, file_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def extract_stac_catalog_metadata(catalog_path: str, file_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     # Initialize catalog_data dictionary
     catalog_data = {}
 
@@ -468,7 +468,7 @@ def extract_stac_metadata(output_dir: str, file_map: Optional[Dict[str, str]] = 
         return None
 
     # Walk the catalog and extract metadata
-    catalog_metadata = walk_stac_catalog_2(catalog_file, file_map=file_map)
+    catalog_metadata = extract_stac_catalog_metadata(catalog_file, file_map=file_map)
     if not catalog_metadata:
         return None
     catalog_metadata = catalog_metadata['catalog_data']
