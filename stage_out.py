@@ -25,7 +25,7 @@ LOGGER = logging.getLogger(__name__)
 _JSON_OUTPUT_MODE = False
 
 
-def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
+def walk_stac_catalog_2(catalog_path: str, file_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     # Initialize catalog_data dictionary
     catalog_data = {}
 
@@ -161,15 +161,10 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
                 # Add to items list
                 items.append(item_metadata)
 
-                # Calculate item directory path for relative asset href calculations
-                # (directories will be created in process_outputs.py if --create-item-metadata is enabled)
-                item_dir = os.path.join(catalog_dir, item.id)
-
-                # Update asset hrefs to be relative to the new item_dir location
                 # Get the directory where the original item.json is located
                 original_item_dir = os.path.dirname(item_link.target)
 
-                # Update each asset's href to be relative to the new item_dir
+                # Update each asset's href to be relative to the item.json's own directory
                 for asset_key, asset in item.assets.items():
                     original_href = asset.href
 
@@ -178,22 +173,28 @@ def walk_stac_catalog_2(catalog_path: str) -> Dict[str, Any]:
                         LOGGER.info(f"  Skipping remote asset: {original_href}")
                         continue
 
-                    # Resolve the asset's absolute path from the original item location
-                    if os.path.isabs(original_href):
-                        # Already absolute path
-                        asset_absolute_path = original_href
+                    # Resolve the asset's absolute path
+                    basename = os.path.basename(original_href)
+                    if file_map and basename in file_map:
+                        # Use exact path from cwltool summary listing (no stale temp paths)
+                        actual_path = file_map[basename]
+                        LOGGER.info(f"  Resolved '{asset_key}' via summary map: {actual_path}")
+                    elif os.path.isabs(original_href):
+                        # Fallback: use absolute path as-is
+                        actual_path = original_href
                     else:
-                        # Relative path - resolve from original item.json location
-                        asset_absolute_path = os.path.abspath(
+                        # Fallback: resolve relative path from original item.json location
+                        actual_path = os.path.abspath(
                             os.path.join(original_item_dir, original_href)
                         )
 
-                    # Calculate new relative path from item_dir to the asset
-                    new_relative_href = os.path.relpath(asset_absolute_path, item_dir)
+                    # Calculate relative path from item.json's own directory
+                    asset.href = os.path.relpath(actual_path, original_item_dir)
+                    LOGGER.info(f"  Updated asset '{asset_key}': {original_href} -> {asset.href}")
 
-                    # Update the asset href
-                    asset.href = new_relative_href
-                    LOGGER.info(f"  Updated asset '{asset_key}': {original_href} -> {new_relative_href}")
+                # Write corrected hrefs back to item.json on disk
+                with open(item_link.target, 'w') as f:
+                    json.dump(item.to_dict(), f, indent=2)
 
                 conversion_results.append({
                     "item_id": item.id,
@@ -331,9 +332,20 @@ def resolve_output_paths(cwl_outputs: List[CommandOutputParameter]) -> Dict[str,
     return output_paths
 
 
-def parse_cwl_summary(summary_file_path: str) -> Dict[str, Dict[str, Any]]:
+def _collect_files_from_listing(listing: list) -> Dict[str, str]:
+    """Recursively build {basename: absolute_path} from a cwltool listing."""
+    file_map = {}
+    for entry in listing or []:
+        if entry.get('class') == 'File' and entry.get('path'):
+            file_map[entry['basename']] = entry['path']
+        elif entry.get('class') == 'Directory':
+            file_map.update(_collect_files_from_listing(entry.get('listing', [])))
+    return file_map
+
+
+def parse_cwl_summary(summary_file_path: str) -> tuple:
     """
-    Parse cwltool --write-summary JSON output to extract output paths and metadata.
+    Parse cwltool --write-summary JSON output to extract output paths and a file map.
 
     Replaces the need for parse_cwl_outputs() + resolve_output_paths() when
     the cwltool summary is available.
@@ -342,9 +354,11 @@ def parse_cwl_summary(summary_file_path: str) -> Dict[str, Dict[str, Any]]:
         summary_file_path: Path to the cwltool summary JSON file
 
     Returns:
-        Dictionary mapping output IDs to their resolved paths and metadata,
-        in the same format as resolve_output_paths():
-        {output_id: {'path': str, 'type': str, 'is_directory': bool}}
+        Tuple of (output_paths, file_map):
+        - output_paths: Dict mapping output IDs to their resolved paths and metadata:
+          {output_id: {'path': str, 'type': str, 'is_directory': bool}}
+        - file_map: Dict mapping basename to absolute path for all files in listing:
+          {basename: absolute_path}
     """
     LOGGER.info(f"Parsing cwltool summary: {summary_file_path}")
 
@@ -380,8 +394,16 @@ def parse_cwl_summary(summary_file_path: str) -> Dict[str, Dict[str, Any]]:
             'is_directory': is_directory
         }
 
+    # Build file map from all listings (recursively)
+    file_map = {}
+    for output_data in summary.values():
+        if output_data.get('class') == 'File' and output_data.get('path'):
+            file_map[output_data['basename']] = output_data['path']
+        file_map.update(_collect_files_from_listing(output_data.get('listing', [])))
+
     LOGGER.info(f"Parsed {len(output_paths)} output(s) from cwltool summary")
-    return output_paths
+    LOGGER.info(f"Built file map with {len(file_map)} files from cwltool summary")
+    return output_paths, file_map
 
 
 def is_stac_catalog(directory_path: str) -> bool:
@@ -414,12 +436,13 @@ def is_stac_catalog(directory_path: str) -> bool:
     return False
 
 
-def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
+def extract_stac_metadata(output_dir: str, file_map: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
     """
     Extract comprehensive STAC metadata from an output directory
 
     Args:
         output_dir: Path to output directory containing catalog.json
+        file_map: Optional dict mapping basename to absolute path (from cwltool summary)
 
     Returns:
         Dictionary with complete STAC catalog metadata or None if not a STAC catalog
@@ -445,7 +468,7 @@ def extract_stac_metadata(output_dir: str) -> Optional[Dict[str, Any]]:
         return None
 
     # Walk the catalog and extract metadata
-    catalog_metadata = walk_stac_catalog_2(catalog_file)
+    catalog_metadata = walk_stac_catalog_2(catalog_file, file_map=file_map)
     if not catalog_metadata:
         return None
     catalog_metadata = catalog_metadata['catalog_data']
@@ -483,11 +506,12 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output", summa
     LOGGER.info(f"Fallback output dir: {base_output_dir}")
 
     outputs_list = []
+    file_map = {}  # Initialize empty file_map for fallback paths
 
     # Use cwltool summary if available, otherwise fall back to CWL parsing
     if summary_file and os.path.exists(summary_file):
         LOGGER.info(f"Using cwltool summary: {summary_file}")
-        output_paths = parse_cwl_summary(summary_file)
+        output_paths, file_map = parse_cwl_summary(summary_file)
     else:
         if summary_file:
             LOGGER.warning(f"Summary file not found: {summary_file}, falling back to CWL parsing")
@@ -509,6 +533,7 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output", summa
 
         # Resolve actual output paths
         output_paths = resolve_output_paths(cwl_outputs)
+        # file_map stays empty dict for fallback path
 
     if not output_paths:
         LOGGER.warning("No output files found, falling back to default behavior")
@@ -539,7 +564,7 @@ def stage_out_outputs(cwl_file_path: str, base_output_dir: str = "output", summa
         }
         # Extract STAC metadata if this is a directory that's a STAC catalog
         if is_directory:
-            stac_metadata = extract_stac_metadata(output_dir)
+            stac_metadata = extract_stac_metadata(output_dir, file_map=file_map)
             if stac_metadata:
                 output_dict['stac_metadata'] = stac_metadata
                 LOGGER.info(f"    STAC: {stac_metadata['stac_object_type']} - {stac_metadata['description']}")
