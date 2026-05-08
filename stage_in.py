@@ -55,9 +55,11 @@ def _download_single_item(item_json_data, output_dir, parent_container):
         href = asset.href
         print(f"  Downloading asset '{asset_key}': {os.path.basename(href)}")
         try:
-            dest = _download_asset(href, os.path.dirname(item_dir))
+            asset_dir = os.path.join(item_dir, asset_key.replace("/", "_"))
+            os.makedirs(asset_dir, exist_ok=True)
+            dest = _download_asset(href, asset_dir)
             print("Download complete")
-            local_item.assets[asset_key].href = os.path.basename(dest)
+            local_item.assets[asset_key].href = os.path.join(asset_key.replace("/", "_"), os.path.basename(dest))
         except Exception as e:
             print(f"    Error downloading {asset_key}: {e}")
             local_item.assets.pop(asset_key, None)
