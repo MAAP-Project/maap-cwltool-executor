@@ -48,7 +48,7 @@ def _download_single_item(item_json_data, output_dir, parent_container):
     # pystac.clone() preserves stac_extensions but not extra_fields, so restore them explicitly
     local_item.extra_fields.update(item.extra_fields)
     local_item.clear_links()
-    local_item.set_self_href(str(pathlib.Path(item_dir).resolve()))
+    local_item.set_self_href(str(pathlib.Path(item_dir).resolve() / f"{item.id}.json"))
 
     print(f"Downloading assets for item: {item.id}")
     for asset_key, asset in item.assets.items():
