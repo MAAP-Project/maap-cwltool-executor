@@ -15,9 +15,11 @@ aws s3 cp "$CWL_FILE" .
 CWL_FILE=$(basename "$CWL_FILE")
 # Create inputs.yml from hysds context for input to cwltool command
 python /app/create_inputs.py $CWL_FILE
-
-cwltool --disable-color --no-read-only --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
-        --cidfile-dir $PWD --tmpdir-prefix $PWD --log-dir ${PWD} \
+CWLTOOL_TMP_DIR="$PWD/cwltool_tmp"
+mkdir -p $CWLTOOL_TMP_DIR
+cwltool --quiet --disable-color --no-read-only --timestamps \
+        --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
+        --cidfile-dir $PWD --tmpdir-prefix $CWLTOOL_TMP_DIR --log-dir ${PWD} \
         --write-summary ${PWD}/cwl_summary.json \
         ${CWL_FILE} inputs.yml || (tail -n 20 _stderr.txt > _alt_traceback.txt && exit 1)
 
