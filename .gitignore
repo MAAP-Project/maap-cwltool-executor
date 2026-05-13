@@ -1,0 +1,15 @@
+
+/.idea/*
+.vscode
+.claude/
+.DS_Store
+node_modules/
+dist/
+.env
+output/
+*.log
+cardamom_era5*
+
+test/files/
+test/
+*.pyc
