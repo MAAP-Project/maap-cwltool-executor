@@ -10,6 +10,8 @@ from cwl_utils.parser.cwl_v1_2 import CommandLineTool, CommandInputParameter
 import urllib.parse
 import stage_in
 import requests
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 
 def get_id_from_uri(uri):
@@ -92,9 +94,26 @@ def convert_value_to_cwl_type(value, cwl_type_str):
 
 
 def load_json_from_uri(uri):
+    parsed = urllib.parse.urlparse(uri)
+
+    if parsed.scheme == "s3":
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+        try:
+            s3 = boto3.client("s3")
+            response = s3.get_object(Bucket=bucket, Key=key)
+            return json.loads(response["Body"].read())
+        except (BotoCoreError, ClientError) as e:
+            print(f"S3 error: {e}")
+            return None
+        except ValueError as e:
+            print(f"Failed to parse JSON: {e}")
+            return None
+
+    # http / https
     try:
         response = requests.get(uri)
-        response.raise_for_status()  # Raise error for bad status codes
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         print(f"Request error: {e}")
@@ -178,7 +197,11 @@ def map_inputs_from_context(job_inputs: dict, cwl_inputs: [CommandInputParameter
 
         if base_type == "Directory":
             print("Encountered STAC input, localizing assets.")
-            # STAC input can be either a Feature (STAC Item) or FeatureCollection (STAC Collection)
+            # Load STAC JSON directly from the URI rather than using the HySDS-localized copy.
+            # HySDS caches localized files by URI path — if the JSON content changes at the same
+            # URI, HySDS serves the stale cached version. Fetching from the URI at runtime
+            # guarantees we always get the current content.
+            # TODO: Update the HySDS spec builder to not map this input as a localize field.
             stac_json = load_json_from_uri(job_inputs.get(input_name))
             output_dir = str(pathlib.Path(input_name).resolve())
             stage_in.download_stac_assets_from_json(stac_json, output_dir)

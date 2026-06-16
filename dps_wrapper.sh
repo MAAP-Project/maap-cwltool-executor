@@ -17,7 +17,7 @@ CWL_FILE=$(basename "$CWL_FILE")
 python /app/create_inputs.py $CWL_FILE
 CWLTOOL_TMP_DIR="$PWD/cwltool_tmp"
 mkdir -p $CWLTOOL_TMP_DIR
-cwltool --quiet --disable-color --no-read-only --timestamps \
+cwltool --quiet --disable-color --no-read-only --timestamps --leave-tmpdir \
         --preserve-environment MAAP_PGT --preserve-environment MAAP_API_HOST \
         --cidfile-dir $PWD --tmpdir-prefix $CWLTOOL_TMP_DIR --log-dir ${PWD} \
         --write-summary ${PWD}/cwl_summary.json \
