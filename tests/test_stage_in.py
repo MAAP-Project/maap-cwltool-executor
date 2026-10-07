@@ -205,8 +205,8 @@ class TestExtentComputation:
 class TestSingleItemDownload:
     """Test _download_single_item() behavior."""
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_subdirectory_created(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_subdirectory_created(self, mock_get_maap, tmp_path):
         """A subdirectory <output_dir>/<item.id>/ should be created."""
         item_json = {
             "type": "Feature",
@@ -226,10 +226,10 @@ class TestSingleItemDownload:
         assert expected_dir.exists()
         assert expected_dir.is_dir()
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_download_granule_called_per_asset(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_download_granule_called_per_asset(self, mock_get_maap, tmp_path):
         """maap.downloadGranule should be called once per asset with the correct URL."""
-        mock_download.side_effect = [
+        mock_get_maap.return_value.downloadGranule.side_effect = [
             str(tmp_path / "test-item-123" / "asset1.tif"),
             str(tmp_path / "test-item-123" / "asset2.json")
         ]
@@ -251,15 +251,15 @@ class TestSingleItemDownload:
         parent_container = Mock()
         _download_single_item(item_json, str(tmp_path), parent_container)
         
-        assert mock_download.call_count == 2
-        calls = mock_download.call_args_list
+        assert mock_get_maap.return_value.downloadGranule.call_count == 2
+        calls = mock_get_maap.return_value.downloadGranule.call_args_list
         assert calls[0][1]['online_access_url'] == "https://example.com/data.tif"
         assert calls[1][1]['online_access_url'] == "https://example.com/meta.json"
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_returned_item_added_to_parent(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_returned_item_added_to_parent(self, mock_get_maap, tmp_path):
         """The returned item should be added to the parent container."""
-        mock_download.return_value = str(tmp_path / "test-item-123" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-123" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -282,10 +282,10 @@ class TestSingleItemDownload:
         assert added_item.id == "test-item-123"
         assert isinstance(result, pystac.Item)
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_asset_hrefs_are_relative(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_asset_hrefs_are_relative(self, mock_get_maap, tmp_path):
         """All asset hrefs on the returned item should be relative paths."""
-        mock_download.return_value = str(tmp_path / "test-item-123" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-123" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -307,8 +307,8 @@ class TestSingleItemDownload:
             assert not asset.href.startswith("http")
             assert not os.path.isabs(asset.href)
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_one_asset_fails_rest_still_download(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_one_asset_fails_rest_still_download(self, mock_get_maap, tmp_path):
         """If one asset fails, the rest should still download (no crash)."""
         def side_effect(*args, **kwargs):
             url = kwargs['online_access_url']
@@ -316,7 +316,7 @@ class TestSingleItemDownload:
                 raise Exception("Download failed")
             return str(tmp_path / "test-item-123" / "success.tif")
 
-        mock_download.side_effect = side_effect
+        mock_get_maap.return_value.downloadGranule.side_effect = side_effect
 
         item_json = {
             "type": "Feature",
@@ -336,14 +336,14 @@ class TestSingleItemDownload:
         parent_container = Mock()
         result = _download_single_item(item_json, str(tmp_path), parent_container)
         
-        assert mock_download.call_count == 3
+        assert mock_get_maap.return_value.downloadGranule.call_count == 3
         assert len(result.assets) == 2
         assert "good1" in result.assets
         assert "good2" in result.assets
         assert "bad" not in result.assets
     
-    @patch('stage_in.maap.downloadGranule')
-    def test_zero_assets_no_download_calls(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_zero_assets_no_download_calls(self, mock_get_maap, tmp_path):
         """Zero assets should result in downloadGranule never being called."""
         item_json = {
             "type": "Feature",
@@ -359,16 +359,16 @@ class TestSingleItemDownload:
         parent_container = Mock()
         _download_single_item(item_json, str(tmp_path), parent_container)
         
-        mock_download.assert_not_called()
+        mock_get_maap.return_value.downloadGranule.assert_not_called()
 
 
 class TestStacMetadataPreservation:
     """Test preservation of STAC metadata during item cloning and local staging."""
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_extra_fields_preserved(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_extra_fields_preserved(self, mock_get_maap, tmp_path):
         """Extra fields (non-standard STAC properties) should be preserved via clone() and explicit update."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -392,10 +392,10 @@ class TestStacMetadataPreservation:
         assert result.extra_fields.get("custom_field") == "custom_value"
         assert result.extra_fields.get("another_custom") == {"nested": "object"}
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_extra_fields_survive_serialization(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_extra_fields_survive_serialization(self, mock_get_maap, tmp_path):
         """Extra fields should survive to_dict() serialization for JSON output."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -420,10 +420,10 @@ class TestStacMetadataPreservation:
         assert result_dict.get("custom_field") == "custom_value"
         assert result_dict.get("license") == "CC-BY-4.0"
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_stac_extensions_preserved(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_stac_extensions_preserved(self, mock_get_maap, tmp_path):
         """stac_extensions list should be preserved during clone."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -450,10 +450,10 @@ class TestStacMetadataPreservation:
             "https://stac-extensions.github.io/sar/v0.9.0/schema.json"
         ]
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_stac_extensions_empty_list_preserved(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_stac_extensions_empty_list_preserved(self, mock_get_maap, tmp_path):
         """Empty stac_extensions list should be preserved."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -474,10 +474,10 @@ class TestStacMetadataPreservation:
 
         assert result.stac_extensions == []
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_original_item_dict_not_mutated(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_original_item_dict_not_mutated(self, mock_get_maap, tmp_path):
         """The input item_json dict should not be mutated by clone()."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         original_href = "https://example.com/data.tif"
         item_json = {
@@ -499,10 +499,10 @@ class TestStacMetadataPreservation:
         # Input dict should retain original remote href
         assert item_json["assets"]["data"]["href"] == original_href
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_links_cleared_and_self_href_reset(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_links_cleared_and_self_href_reset(self, mock_get_maap, tmp_path):
         """Remote links should be cleared and replaced with local self href."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -528,10 +528,10 @@ class TestStacMetadataPreservation:
         assert result.links[0].rel == "self"
         assert "example.com" not in result.links[0].target
 
-    @patch('stage_in.maap.downloadGranule')
-    def test_self_href_set_to_local_path(self, mock_download, tmp_path):
+    @patch('stage_in._get_maap')
+    def test_self_href_set_to_local_path(self, mock_get_maap, tmp_path):
         """Self href should be set to the resolved absolute path of <output_dir>/<item.id>."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -557,9 +557,9 @@ class TestStacMetadataPreservation:
 class TestSingleItemCatalogAssembly:
     """Test download_stac_item_assets_from_json() catalog assembly."""
 
-    @patch('stage_in.maap.downloadGranule')
+    @patch('stage_in._get_maap')
     @patch('pystac.Catalog.save')
-    def test_output_directory_created(self, mock_save, mock_download, tmp_path):
+    def test_output_directory_created(self, mock_save, mock_get_maap, tmp_path):
         """Output directory should be created."""
         output_dir = tmp_path / "test_output"
 
@@ -578,9 +578,9 @@ class TestSingleItemCatalogAssembly:
         
         assert output_dir.exists()
     
-    @patch('stage_in.maap.downloadGranule')
+    @patch('stage_in._get_maap')
     @patch('pystac.Catalog.save')
-    def test_catalog_json_exists(self, mock_save, mock_download, tmp_path):
+    def test_catalog_json_exists(self, mock_save, mock_get_maap, tmp_path):
         """catalog.json should exist after the call."""
         output_dir = tmp_path / "test_output"
 
@@ -599,12 +599,12 @@ class TestSingleItemCatalogAssembly:
         
         mock_save.assert_called_once()
     
-    @patch('stage_in.maap.downloadGranule')
+    @patch('stage_in._get_maap')
     @patch('pystac.Catalog.save')
-    def test_catalog_contains_one_item(self, mock_save, mock_download, tmp_path):
+    def test_catalog_contains_one_item(self, mock_save, mock_get_maap, tmp_path):
         """The catalog should contain exactly the one item from input."""
         output_dir = tmp_path / "test_output"
-        mock_download.return_value = str(output_dir / "test-item" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(output_dir / "test-item" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -834,7 +834,7 @@ class TestAssetRouting:
     """Test _download_asset() routes to boto3 vs maap.downloadGranule based on URL."""
 
     @patch('stage_in.boto3')
-    @patch('stage_in.maap')
+    @patch('stage_in._get_maap')
     def test_maap_s3_url_uses_boto3(self, mock_maap, mock_boto3, tmp_path):
         href = "s3://maap-data-store/path/to/file.tif"
         mock_s3 = MagicMock()
@@ -845,30 +845,52 @@ class TestAssetRouting:
 
         mock_boto3.client.assert_called_once_with("s3")
         mock_s3.download_file.assert_called_once_with("maap-data-store", "path/to/file.tif", str(tmp_path / "file.tif"))
-        mock_maap.downloadGranule.assert_not_called()
+        mock_maap.return_value.downloadGranule.assert_not_called()
         assert dest == str(tmp_path / "file.tif")
 
     @patch('stage_in.boto3')
-    @patch('stage_in.maap')
+    @patch('stage_in._get_maap')
     def test_daac_url_uses_maap_download_granule(self, mock_maap, mock_boto3):
         href = "https://daac.gsfc.nasa.gov/data/file.tif"
-        mock_maap.downloadGranule.return_value = "/local/file.tif"
+        mock_maap.return_value.downloadGranule.return_value = "/local/file.tif"
 
         dest = _download_asset(href, "/local")
 
-        mock_maap.downloadGranule.assert_called_once_with(
+        mock_maap.return_value.downloadGranule.assert_called_once_with(
             online_access_url=href, destination_path="/local", overwrite=True
         )
         mock_boto3.client.assert_not_called()
         assert dest == "/local/file.tif"
 
     @patch('stage_in.boto3')
-    @patch('stage_in.maap')
+    @patch('stage_in._get_maap')
     def test_non_maap_s3_url_falls_through_to_maap(self, mock_maap, mock_boto3):
         href = "s3://some-other-bucket/data/file.tif"
-        mock_maap.downloadGranule.return_value = "/local/file.tif"
+        mock_maap.return_value.downloadGranule.return_value = "/local/file.tif"
 
         _download_asset(href, "/local")
 
-        mock_maap.downloadGranule.assert_called_once()
+        mock_maap.return_value.downloadGranule.assert_called_once()
         mock_boto3.client.assert_not_called()
+
+
+class TestLazyClient:
+    """The MAAP client must not be constructed at import or for non-MAAP downloads."""
+
+    @patch('stage_in.boto3')
+    @patch('stage_in.MAAP')
+    def test_no_client_for_maap_s3(self, mock_cls, mock_boto3, tmp_path):
+        import stage_in
+        stage_in._maap = None
+        mock_boto3.client.return_value.download_file.side_effect = lambda b, k, d: open(d, 'w').close()
+        _download_asset("s3://maap-data-store/a/file.tif", str(tmp_path))
+        mock_cls.assert_not_called()
+
+    @patch('stage_in.MAAP')
+    def test_client_created_once_on_demand(self, mock_cls):
+        import stage_in
+        stage_in._maap = None
+        _download_asset("https://example.com/f.tif", "/tmp")
+        _download_asset("https://example.com/g.tif", "/tmp")
+        mock_cls.assert_called_once()
+        stage_in._maap = None
