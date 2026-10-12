@@ -195,6 +195,15 @@ def map_inputs_from_context(job_inputs: dict, cwl_inputs: [CommandInputParameter
         input_name = get_id_from_uri(input.id)
         base_type, is_optional = parse_cwl_type(input_type)
 
+        if base_type in ("Directory", "File"):
+            raw_value = job_inputs.get(input_name)
+            if raw_value is None or raw_value == "None" or raw_value == "":
+                if is_optional:
+                    # Omit so cwltool does not pass the flag to the algorithm
+                    print(f"No value provided for optional {base_type} input '{input_name}', skipping.")
+                    continue
+                raise ValueError(f"No value provided for required {base_type} input '{input_name}'.")
+
         if base_type == "Directory":
             print("Encountered STAC input, localizing assets.")
             # Load STAC JSON directly from the URI rather than using the HySDS-localized copy.
