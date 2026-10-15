@@ -7,7 +7,15 @@ import boto3
 from datetime import datetime
 from maap.maap import MAAP
 
-maap = MAAP()
+_maap = None
+
+
+def _get_maap():
+    """Create the MAAP client on first use so jobs without file downloads make no API call."""
+    global _maap
+    if _maap is None:
+        _maap = MAAP()
+    return _maap
 
 
 def _download_asset(href, destination_path):
@@ -19,7 +27,7 @@ def _download_asset(href, destination_path):
         dest = os.path.join(destination_path, filename)
         boto3.client("s3").download_file(bucket, key, dest)
         return dest
-    return maap.downloadGranule(
+    return _get_maap().downloadGranule(
         online_access_url=href,
         destination_path=destination_path,
         overwrite=True,
