@@ -531,13 +531,8 @@ class TestStacMetadataPreservation:
 
     @patch('stage_in._get_maap')
     def test_self_href_set_to_local_path(self, mock_get_maap, tmp_path):
-        """Self href should be set to the resolved absolute path of <output_dir>/<item.id>."""
-        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
-        
-    @patch('stage_in.maap.downloadGranule')
-    def test_self_href_set_to_local_path(self, mock_download, tmp_path):
         """Self href should be the resolved absolute path of <output_dir>/<item.id>/<item.id>.json."""
-        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
