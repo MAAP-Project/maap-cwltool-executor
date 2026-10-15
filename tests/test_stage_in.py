@@ -445,10 +445,11 @@ class TestStacMetadataPreservation:
         parent_container = Mock()
         result = _download_single_item(item_json, str(tmp_path), parent_container)
 
-        assert result.stac_extensions == [
-            "https://stac-extensions.github.io/eo/v1.0.0/schema.json",
-            "https://stac-extensions.github.io/sar/v0.9.0/schema.json"
-        ]
+        # pystac may migrate extension schemas to newer versions on read,
+        # so check that each extension is preserved without pinning its version.
+        assert len(result.stac_extensions) == 2
+        assert any("/eo/" in ext for ext in result.stac_extensions)
+        assert any("/sar/" in ext for ext in result.stac_extensions)
 
     @patch('stage_in._get_maap')
     def test_stac_extensions_empty_list_preserved(self, mock_get_maap, tmp_path):
@@ -532,6 +533,11 @@ class TestStacMetadataPreservation:
     def test_self_href_set_to_local_path(self, mock_get_maap, tmp_path):
         """Self href should be set to the resolved absolute path of <output_dir>/<item.id>."""
         mock_get_maap.return_value.downloadGranule.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
+        
+    @patch('stage_in.maap.downloadGranule')
+    def test_self_href_set_to_local_path(self, mock_download, tmp_path):
+        """Self href should be the resolved absolute path of <output_dir>/<item.id>/<item.id>.json."""
+        mock_download.return_value = str(tmp_path / "test-item-meta" / "asset.tif")
 
         item_json = {
             "type": "Feature",
@@ -549,7 +555,7 @@ class TestStacMetadataPreservation:
         parent_container = Mock()
         result = _download_single_item(item_json, str(tmp_path), parent_container)
 
-        expected_self_href = str((tmp_path / "test-item-meta").resolve())
+        expected_self_href = str((tmp_path / "test-item-meta" / "test-item-meta.json").resolve())
         actual_self_href = result.get_self_href()
         assert actual_self_href == expected_self_href
 

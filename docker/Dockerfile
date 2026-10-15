@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir \
     cwl_utils==0.35 \
     PyYAML \
     awscli \
-    pystac \
+    pystac==1.15.2 \
     maap-py \
     requests
 
