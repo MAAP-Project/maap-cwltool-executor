@@ -23,7 +23,7 @@ jobs:
       with:
         python-version: '3.12'
     - name: Install dependencies
-      run: pip install pytest cwltool==3.1.20250110105449 cwl_utils==0.35 PyYAML pystac==1.15.2 maap-py requests
+      run: pip install pytest cwltool==3.1.20250110105449 cwl_utils==0.35 PyYAML pystac==1.15.2 maap-py requests "urllib3>=2"
     - name: Run tests
       run: pytest tests
 

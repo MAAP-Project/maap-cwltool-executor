@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir \
     awscli \
     pystac==1.15.2 \
     maap-py \
-    requests
+    requests \
+    "urllib3>=2"
 
 # Copy only what you need
 COPY docker_stats/docker-stats-on-exit-shim /docker-stats-on-exit-shim

@@ -1,15 +1,17 @@
 import json
 import os
-import random
 import sys
-import time
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry  # backoff_jitter requires urllib3>=2
 
 TIMEOUT = (5, 30)  # (connect, read) seconds
-MAX_ATTEMPTS = 6
-BACKOFF_BASE = 1.0  # seconds; doubles each attempt
-BACKOFF_CAP = 30.0
+MAX_RETRIES = 5  # i.e. up to 6 attempts
+BACKOFF_FACTOR = 1.0  # sleeps ~ factor * 2**(n-1) seconds between retries, plus jitter
+BACKOFF_JITTER = 1.0
+BACKOFF_MAX = 30.0
+RETRY_STATUSES = tuple(range(500, 600))
 EXIT_CODE_PGT_FAILURE = 78  # distinct job exit status for PGT token failures
 
 
@@ -17,9 +19,21 @@ class PgtTokenError(Exception):
     """Raised when the MAAP PGT token cannot be obtained."""
 
 
-def _sleep_time(attempt):
-    """Exponential backoff with full jitter for the given 0-based attempt."""
-    return random.uniform(0, min(BACKOFF_CAP, BACKOFF_BASE * 2 ** attempt))
+def _session():
+    """Session retrying connect errors, timeouts and 5xx with exponential backoff and jitter."""
+    retry = Retry(
+        total=MAX_RETRIES,
+        backoff_factor=BACKOFF_FACTOR,
+        backoff_jitter=BACKOFF_JITTER,
+        backoff_max=BACKOFF_MAX,
+        status_forcelist=RETRY_STATUSES,
+        raise_on_status=False,  # hand back the last response so we can raise a clear error
+    )
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 def get_maap_pgt_token(username, maap_api_host=None):
@@ -27,39 +41,35 @@ def get_maap_pgt_token(username, maap_api_host=None):
     url = f"https://{maap_api_host}/api/members/{username}"
     headers = {"dps-token": os.environ.get("DPS_MACHINE_TOKEN")}
 
-    last_error = None
-    for attempt in range(MAX_ATTEMPTS):
-        if attempt:
-            time.sleep(_sleep_time(attempt - 1))
-        try:
-            response = requests.get(url, headers=headers, timeout=TIMEOUT)
-        except (requests.ConnectionError, requests.Timeout) as e:
-            last_error = f"{type(e).__name__}: {e}"
-            continue
+    try:
+        with _session() as session:
+            response = session.get(url, headers=headers, timeout=TIMEOUT)
+    except requests.RequestException as e:
+        raise PgtTokenError(
+            f"Could not get MAAP_PGT for user '{username}' from {url} "
+            f"after {MAX_RETRIES + 1} attempts; last error: {type(e).__name__}: {e}"
+        ) from e
 
-        if response.status_code >= 500:
-            last_error = f"HTTP {response.status_code}"
-            continue
+    if response.status_code >= 500:
+        raise PgtTokenError(
+            f"Could not get MAAP_PGT for user '{username}' from {url} "
+            f"after {MAX_RETRIES + 1} attempts; last error: HTTP {response.status_code}"
+        )
 
-        try:
-            response.raise_for_status()
-        except requests.HTTPError as e:
-            # 4xx is permanent (e.g. bad token, unknown user): do not retry
-            raise PgtTokenError(
-                f"Request for user '{username}' to {url} failed: HTTP {response.status_code}"
-            ) from e
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as e:
+        # 4xx is permanent (e.g. bad token, unknown user) and was not retried
+        raise PgtTokenError(
+            f"Request for user '{username}' to {url} failed: HTTP {response.status_code}"
+        ) from e
 
-        try:
-            return response.json()["session_key"]
-        except (ValueError, KeyError, TypeError) as e:
-            raise PgtTokenError(
-                f"Response from {url} for user '{username}' has no usable 'session_key'"
-            ) from e
-
-    raise PgtTokenError(
-        f"Could not get MAAP_PGT for user '{username}' from {url} "
-        f"after {MAX_ATTEMPTS} attempts; last error: {last_error}"
-    )
+    try:
+        return response.json()["session_key"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise PgtTokenError(
+            f"Response from {url} for user '{username}' has no usable 'session_key'"
+        ) from e
 
 
 def report_failure(error, job_dir="."):
