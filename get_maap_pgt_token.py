@@ -65,11 +65,16 @@ def get_maap_pgt_token(username, maap_api_host=None):
         ) from e
 
     try:
-        return response.json()["session_key"]
+        token = response.json()["session_key"]
     except (ValueError, KeyError, TypeError) as e:
         raise PgtTokenError(
             f"Response from {url} for user '{username}' has no usable 'session_key'"
         ) from e
+    if not isinstance(token, str) or not token.strip():
+        raise PgtTokenError(
+            f"Response from {url} for user '{username}' has an empty 'session_key'"
+        )
+    return token
 
 
 def report_failure(error, job_dir="."):
@@ -87,12 +92,13 @@ def report_failure(error, job_dir="."):
 if __name__ == '__main__':
     with open("_job.json") as fr:
         job = json.loads(fr.read())
-        username = job.get("username")
-        if username:
-            try:
-                maap_pgt_token = get_maap_pgt_token(username)
-                print(maap_pgt_token)
-            except PgtTokenError as e:
-                # stdout is captured into MAAP_PGT by dps_wrapper.sh, so report on stderr
-                report_failure(e)
-                sys.exit(EXIT_CODE_PGT_FAILURE)
+    username = job.get("username")
+    try:
+        if not username:
+            # an empty MAAP_PGT would only surface later as a 401 in the user's code
+            raise PgtTokenError("no 'username' in _job.json, cannot request a MAAP_PGT")
+        print(get_maap_pgt_token(username))
+    except PgtTokenError as e:
+        # stdout is captured into MAAP_PGT by dps_wrapper.sh, so report on stderr
+        report_failure(e)
+        sys.exit(EXIT_CODE_PGT_FAILURE)

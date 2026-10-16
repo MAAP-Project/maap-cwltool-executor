@@ -145,6 +145,13 @@ def test_non_json_body_gives_clear_error():
             get_maap_pgt_token("alice")
 
 
+@pytest.mark.parametrize("key", ["", "   ", None, 123])
+def test_empty_or_non_string_session_key_gives_clear_error(key):
+    with _mock_session(MagicMock(return_value=_resp(200, {"session_key": key}))):
+        with pytest.raises(PgtTokenError, match="empty 'session_key'"):
+            get_maap_pgt_token("alice")
+
+
 # --- failure reporting to HySDS ---
 
 def test_report_failure_writes_stderr_and_alt_error(tmp_path, capsys):
@@ -169,3 +176,14 @@ def test_main_exits_with_custom_code_and_keeps_stdout_clean(tmp_path):
     assert r.stdout == ""
     assert "Unable to get user MAAP_PGT token" in r.stderr
     assert (tmp_path / "_alt_error.txt").exists()
+
+
+def test_main_without_username_fails_instead_of_printing_empty_token(tmp_path):
+    (tmp_path / "_job.json").write_text(json.dumps({}))
+    r = subprocess.run(
+        [sys.executable, mod.__file__], cwd=tmp_path, capture_output=True, text=True,
+        env={"PATH": ""},
+    )
+    assert r.returncode == mod.EXIT_CODE_PGT_FAILURE, r.stderr
+    assert r.stdout == ""
+    assert "username" in (tmp_path / "_alt_error.txt").read_text()
