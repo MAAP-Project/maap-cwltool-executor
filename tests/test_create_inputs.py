@@ -1,7 +1,7 @@
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 # Add parent directory to path to import create_inputs
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -76,3 +76,27 @@ class TestOptionalFileDirectoryInputs:
         job_inputs = {"req_str": "x", "opt_str": ""}
 
         assert map_inputs_from_context(job_inputs, cwl_inputs) == {"req_str": "x"}
+
+
+class TestLoadJsonFromUriRetry:
+    @patch('create_inputs.time.sleep')
+    @patch('create_inputs.requests.get')
+    def test_retries_transient_503_then_succeeds(self, mock_get, _sleep):
+        import requests
+        import create_inputs
+        bad = MagicMock()
+        bad.raise_for_status.side_effect = requests.exceptions.HTTPError("503")
+        good = MagicMock()
+        good.json.return_value = {"type": "Feature"}
+        mock_get.side_effect = [bad, bad, good]
+        assert create_inputs.load_json_from_uri("https://example.com/item") == {"type": "Feature"}
+        assert mock_get.call_count == 3
+
+    @patch('create_inputs.time.sleep')
+    @patch('create_inputs.requests.get')
+    def test_returns_none_after_exhausting_retries(self, mock_get, _sleep):
+        import requests
+        import create_inputs
+        mock_get.side_effect = requests.exceptions.ConnectionError("down")
+        assert create_inputs.load_json_from_uri("https://example.com/item") is None
+        assert mock_get.call_count == create_inputs.HTTP_RETRIES

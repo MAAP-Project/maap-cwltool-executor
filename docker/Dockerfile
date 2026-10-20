@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir \
     PyYAML \
     awscli \
     pystac==1.15.2 \
-    maap-py \
+    maap-py==5.1.0 \
     requests \
     "urllib3>=2"
 
