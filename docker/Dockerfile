@@ -21,9 +21,10 @@ RUN pip install --no-cache-dir \
     cwl_utils==0.35 \
     PyYAML \
     awscli \
-    pystac \
-    maap-py \
-    requests
+    pystac==1.15.2 \
+    maap-py==5.1.0 \
+    requests \
+    "urllib3>=2"
 
 # Copy only what you need
 COPY docker_stats/docker-stats-on-exit-shim /docker-stats-on-exit-shim
