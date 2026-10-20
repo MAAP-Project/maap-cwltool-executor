@@ -19,7 +19,7 @@ def _get_maap():
 
 
 def _download_asset(href, destination_path):
-    """Route asset download: MAAP S3 buckets use boto3, everything else uses maap.downloadGranule."""
+    """Route asset download: MAAP S3 buckets use boto3, everything else uses maap.download_granule."""
     if href.startswith("s3://maap-"):
         parts = href[5:].split("/", 1)
         bucket, key = parts[0], parts[1]
@@ -27,7 +27,7 @@ def _download_asset(href, destination_path):
         dest = os.path.join(destination_path, filename)
         boto3.client("s3").download_file(bucket, key, dest)
         return dest
-    return _get_maap().downloadGranule(
+    return _get_maap().download_granule(
         online_access_url=href,
         destination_path=destination_path,
         overwrite=True,

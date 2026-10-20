@@ -1,5 +1,6 @@
 import json
 import pathlib
+import time
 
 import yaml
 import os
@@ -93,6 +94,9 @@ def convert_value_to_cwl_type(value, cwl_type_str):
         return value
 
 
+HTTP_RETRIES = 4
+
+
 def load_json_from_uri(uri):
     parsed = urllib.parse.urlparse(uri)
 
@@ -110,17 +114,20 @@ def load_json_from_uri(uri):
             print(f"Failed to parse JSON: {e}")
             return None
 
-    # http / https
-    try:
-        response = requests.get(uri)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"Request error: {e}")
-        return None
-    except ValueError as e:
-        print(f"Failed to parse JSON: {e}")
-        return None
+    # http / https: retry transient failures (e.g. CMR STAC 503s)
+    for attempt in range(1, HTTP_RETRIES + 1):
+        try:
+            response = requests.get(uri, timeout=60)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Request error (attempt {attempt}/{HTTP_RETRIES}): {e}")
+            if attempt < HTTP_RETRIES:
+                time.sleep(2 ** attempt)
+        except ValueError as e:
+            print(f"Failed to parse JSON: {e}")
+            return None
+    return None
 
 
 def parse_cwl_inputs(cwl_file_path) -> [CommandInputParameter]:
@@ -211,7 +218,10 @@ def map_inputs_from_context(job_inputs: dict, cwl_inputs: [CommandInputParameter
             # URI, HySDS serves the stale cached version. Fetching from the URI at runtime
             # guarantees we always get the current content.
             # TODO: Update the HySDS spec builder to not map this input as a localize field.
-            stac_json = load_json_from_uri(job_inputs.get(input_name))
+            stac_uri = job_inputs.get(input_name)
+            stac_json = load_json_from_uri(stac_uri)
+            if stac_json is None:
+                raise RuntimeError(f"Could not load STAC JSON for input '{input_name}' from {stac_uri}")
             output_dir = str(pathlib.Path(input_name).resolve())
             stage_in.download_stac_assets_from_json(stac_json, output_dir)
             workflow_inputs[input_name] = {"class": "Directory", "path": output_dir}

@@ -4,4 +4,4 @@ dependencies:
   - cwl_utils==0.35
   - nodejs
   - pystac==1.15.2
-  - maap-py
+  - maap-py==5.1.0
