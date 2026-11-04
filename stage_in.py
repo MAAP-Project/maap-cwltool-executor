@@ -4,8 +4,21 @@ import json  # Import the json library
 import argparse
 import pathlib
 import boto3
-from datetime import datetime
+import requests
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from maap.maap import MAAP
+
+CMR_COLLECTIONS_URL = "https://cmr.earthdata.nasa.gov/search/collections.umm_json"
+# Set STAGE_IN_DIRECT_S3=false to always use https for DAAC assets.
+DIRECT_S3_ENABLED = os.environ.get("STAGE_IN_DIRECT_S3", "true").lower() not in ("0", "false", "no")
+_CREDS_REFRESH_MARGIN = timedelta(minutes=5)
+_DEFAULT_CREDS_LIFETIME = timedelta(minutes=30)
+
+# endpoint -> (credentials dict, refresh_after datetime)
+_daac_creds_cache = {}
+# (provider, short_name, version) -> DirectDistributionInformation dict or None
+_daac_info_cache = {}
 
 _maap = None
 
@@ -18,8 +31,98 @@ def _get_maap():
     return _maap
 
 
-def _download_asset(href, destination_path):
-    """Route asset download: MAAP S3 buckets use boto3, everything else uses maap.download_granule."""
+def _is_daac_s3(href):
+    """True for s3:// hrefs outside the MAAP buckets (i.e. DAAC-hosted data)."""
+    return href.startswith("s3://") and not href.startswith("s3://maap-")
+
+
+def _cmr_ref_from_item(item):
+    """
+    Derive (provider, short_name, version) from a CMR-STAC item, or None.
+
+    CMR STAC collection links look like .../stac/<PROVIDER>/collections/<SHORT_NAME>_<VERSION>.
+    """
+    for link in item.links:
+        if link.rel not in ("collection", "parent"):
+            continue
+        parts = urllib.parse.urlparse(link.get_href() or "").path.strip("/").split("/")
+        if "stac" in parts and "collections" in parts:
+            i = parts.index("collections")
+            if i >= 1 and i + 1 < len(parts) and "_" in parts[i + 1] and parts[i - 1] != "stac":
+                short_name, version = parts[i + 1].rsplit("_", 1)
+                return parts[i - 1], short_name, version
+    return None
+
+
+def _direct_distribution_info(cmr_ref):
+    """Look up the collection's DirectDistributionInformation (S3 endpoint, region, buckets) in CMR."""
+    if cmr_ref in _daac_info_cache:
+        return _daac_info_cache[cmr_ref]
+    provider, short_name, version = cmr_ref
+    info = None
+    try:
+        response = requests.get(
+            CMR_COLLECTIONS_URL,
+            params={"provider": provider, "short_name": short_name, "version": version, "page_size": 1},
+            timeout=30,
+        )
+        response.raise_for_status()
+        items = response.json().get("items", [])
+        if items:
+            info = items[0]["umm"].get("DirectDistributionInformation")
+    except (requests.exceptions.RequestException, ValueError) as e:
+        print(f"    CMR lookup for {short_name}.{version} failed: {e}")
+    _daac_info_cache[cmr_ref] = info
+    return info
+
+
+def _daac_credentials(endpoint):
+    """Temporary DAAC S3 credentials for an s3credentials endpoint, cached until shortly before expiry."""
+    cached = _daac_creds_cache.get(endpoint)
+    if cached and datetime.now(timezone.utc) < cached[1]:
+        return cached[0]
+    creds = _get_maap().aws.earthdata_s3_credentials(endpoint)
+    try:
+        expires = datetime.fromisoformat(str(creds["expiration"]).replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        refresh_after = expires - _CREDS_REFRESH_MARGIN
+    except (KeyError, ValueError):
+        refresh_after = datetime.now(timezone.utc) + _DEFAULT_CREDS_LIFETIME
+    _daac_creds_cache[endpoint] = (creds, refresh_after)
+    return creds
+
+
+def _download_daac_s3(href, destination_path, cmr_ref):
+    """Download a DAAC s3:// object using the DAAC's temporary credentials. Raises if not possible."""
+    if not DIRECT_S3_ENABLED:
+        raise RuntimeError("direct DAAC S3 access disabled (STAGE_IN_DIRECT_S3)")
+    if cmr_ref is None:
+        raise RuntimeError("cannot determine the CMR collection for this item")
+    info = _direct_distribution_info(cmr_ref)
+    endpoint = (info or {}).get("S3CredentialsAPIEndpoint")
+    if not endpoint:
+        raise RuntimeError("collection has no S3CredentialsAPIEndpoint in CMR")
+    bucket, key = href[5:].split("/", 1)
+    prefixes = (info or {}).get("S3BucketAndObjectPrefixNames") or []
+    if prefixes and not any(bucket == p[5:].split("/", 1)[0] for p in prefixes if p.startswith("s3://")):
+        raise RuntimeError(f"bucket '{bucket}' is not one of the collection's direct-access buckets")
+    creds = _daac_credentials(endpoint)
+    client = boto3.client(
+        "s3",
+        aws_access_key_id=creds["accessKeyId"],
+        aws_secret_access_key=creds["secretAccessKey"],
+        aws_session_token=creds["sessionToken"],
+        region_name=info.get("Region", "us-west-2"),
+    )
+    dest = os.path.join(destination_path, os.path.basename(key))
+    client.download_file(bucket, key, dest)
+    return dest
+
+
+def _download_asset(href, destination_path, cmr_ref=None):
+    """Route asset download: MAAP S3 buckets use boto3, DAAC s3:// uses DAAC credentials,
+    everything else uses maap.download_granule."""
     if href.startswith("s3://maap-"):
         parts = href[5:].split("/", 1)
         bucket, key = parts[0], parts[1]
@@ -27,6 +130,8 @@ def _download_asset(href, destination_path):
         dest = os.path.join(destination_path, filename)
         boto3.client("s3").download_file(bucket, key, dest)
         return dest
+    if _is_daac_s3(href):
+        return _download_daac_s3(href, destination_path, cmr_ref)
     return _get_maap().download_granule(
         online_access_url=href,
         destination_path=destination_path,
@@ -59,15 +164,39 @@ def _download_single_item(item_json_data, output_dir, parent_container):
     local_item.set_self_href(str(pathlib.Path(item_dir).resolve() / f"{item.id}.json"))
 
     print(f"Downloading assets for item: {item.id}")
-    for asset_key, asset in item.assets.items():
+    cmr_ref = _cmr_ref_from_item(item)
+    https_by_name = {}
+    for asset in item.assets.values():
+        if asset.href.startswith(("http://", "https://")):
+            https_by_name.setdefault(os.path.basename(asset.href), asset.href)
+    fetched_via_s3 = {}  # file name -> local relative href, for files already fetched over direct S3
+
+    # DAAC s3:// assets first, so an https asset for the same file can reuse the result
+    ordered = sorted(item.assets.items(), key=lambda kv: not _is_daac_s3(kv[1].href))
+    for asset_key, asset in ordered:
         href = asset.href
-        print(f"  Downloading asset '{asset_key}': {os.path.basename(href)}")
+        name = os.path.basename(href)
+        key_dir = asset_key.replace("/", "_")
+        print(f"  Downloading asset '{asset_key}': {name}")
+        if href.startswith(("http://", "https://")) and name in fetched_via_s3:
+            print("    Already downloaded via direct S3, reusing")
+            local_item.assets[asset_key].href = fetched_via_s3[name]
+            continue
         try:
-            asset_dir = os.path.join(item_dir, asset_key.replace("/", "_"))
+            asset_dir = os.path.join(item_dir, key_dir)
             os.makedirs(asset_dir, exist_ok=True)
-            dest = _download_asset(href, asset_dir)
+            try:
+                dest = _download_asset(href, asset_dir, cmr_ref)
+                if _is_daac_s3(href):
+                    fetched_via_s3[name] = os.path.join(key_dir, os.path.basename(dest))
+            except Exception as e:
+                fallback = https_by_name.get(name) if _is_daac_s3(href) else None
+                if not fallback:
+                    raise
+                print(f"    Direct S3 failed ({e}); falling back to https")
+                dest = _download_asset(fallback, asset_dir, cmr_ref)
             print("Download complete")
-            local_item.assets[asset_key].href = os.path.join(asset_key.replace("/", "_"), os.path.basename(dest))
+            local_item.assets[asset_key].href = os.path.join(key_dir, os.path.basename(dest))
         except Exception as e:
             print(f"    Error downloading {asset_key}: {e}")
             local_item.assets.pop(asset_key, None)

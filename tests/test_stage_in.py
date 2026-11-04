@@ -865,8 +865,8 @@ class TestAssetRouting:
 
     @patch('stage_in.boto3')
     @patch('stage_in._get_maap')
-    def test_non_maap_s3_url_falls_through_to_maap(self, mock_maap, mock_boto3):
-        href = "s3://some-other-bucket/data/file.tif"
+    def test_non_s3_url_uses_maap_download_granule(self, mock_maap, mock_boto3):
+        href = "https://example.com/data/file.tif"
         mock_maap.return_value.download_granule.return_value = "/local/file.tif"
 
         _download_asset(href, "/local")
@@ -912,3 +912,113 @@ class TestMaapPyContract:
         stage_in._download_asset("https://example.com/a.tif", "/tmp/dest")
         mock_get_maap.return_value.download_granule.assert_called_once_with(
             online_access_url="https://example.com/a.tif", destination_path="/tmp/dest", overwrite=True)
+
+
+DAAC_INFO = {
+    "Region": "us-west-2",
+    "S3CredentialsAPIEndpoint": "https://data.example-daac.nasa.gov/s3credentials",
+    "S3BucketAndObjectPrefixNames": ["s3://daac-prod-protected/Coll/"],
+}
+FUTURE = "2999-01-01T00:00:00+00:00"
+CREDS = {"accessKeyId": "AK", "secretAccessKey": "SK", "sessionToken": "ST", "expiration": FUTURE}
+
+
+def _daac_item(tmp_path):
+    """CMR-STAC style item: the same file as an https asset and as a DAAC s3:// asset."""
+    d = {
+        "type": "Feature", "stac_version": "1.0.0", "id": "daac-item",
+        "geometry": None, "bbox": None, "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "links": [{"rel": "collection", "href": "https://cmr.earthdata.nasa.gov/stac/DAAC_PROV/collections/MYD03_6.1"}],
+        "assets": {
+            "data": {"href": "https://daac.example/files/granule.hdf"},
+            "s3_data": {"href": "s3://daac-prod-protected/Coll/granule.hdf"},
+        },
+    }
+    return d
+
+
+@pytest.fixture(autouse=False)
+def clean_daac_caches():
+    import stage_in
+    stage_in._daac_creds_cache.clear()
+    stage_in._daac_info_cache.clear()
+    yield
+    stage_in._daac_creds_cache.clear()
+    stage_in._daac_info_cache.clear()
+
+
+class TestDaacDirectS3:
+    def test_cmr_ref_from_item_links(self, tmp_path):
+        import stage_in
+        item = pystac.Item.from_dict(_daac_item(tmp_path))
+        assert stage_in._cmr_ref_from_item(item) == ("DAAC_PROV", "MYD03", "6.1")
+
+    def test_cmr_ref_none_without_cmr_collection_link(self):
+        import stage_in
+        d = _daac_item(None)
+        d["links"] = []
+        assert stage_in._cmr_ref_from_item(pystac.Item.from_dict(d)) is None
+
+    @patch('stage_in.boto3')
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=DAAC_INFO)
+    def test_prefers_direct_s3_and_skips_duplicate_https(self, _info, mock_get_maap, mock_boto3, tmp_path, clean_daac_caches):
+        mock_get_maap.return_value.aws.earthdata_s3_credentials.return_value = CREDS
+        local = stage_in_download(tmp_path, _daac_item(tmp_path))
+        mock_boto3.client.return_value.download_file.assert_called_once()
+        assert mock_boto3.client.call_args.kwargs["aws_session_token"] == "ST"
+        assert mock_boto3.client.call_args.kwargs["region_name"] == "us-west-2"
+        mock_get_maap.return_value.download_granule.assert_not_called()
+        assert set(local.assets) == {"data", "s3_data"}
+
+    @patch('stage_in.boto3')
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=DAAC_INFO)
+    def test_falls_back_to_https_when_direct_s3_fails(self, _info, mock_get_maap, mock_boto3, tmp_path, clean_daac_caches):
+        mock_get_maap.return_value.aws.earthdata_s3_credentials.return_value = CREDS
+        mock_boto3.client.return_value.download_file.side_effect = Exception("AccessDenied")
+        mock_get_maap.return_value.download_granule.return_value = str(tmp_path / "daac-item" / "s3_data" / "granule.hdf")
+        local = stage_in_download(tmp_path, _daac_item(tmp_path))
+        # s3 asset falls back to https; the https asset is then downloaded as before
+        assert mock_get_maap.return_value.download_granule.call_count == 2
+        assert set(local.assets) == {"data", "s3_data"}
+
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=None)
+    def test_falls_back_when_collection_has_no_direct_access(self, _info, mock_get_maap, tmp_path, clean_daac_caches):
+        mock_get_maap.return_value.download_granule.return_value = str(tmp_path / "daac-item" / "x" / "granule.hdf")
+        local = stage_in_download(tmp_path, _daac_item(tmp_path))
+        mock_get_maap.return_value.aws.earthdata_s3_credentials.assert_not_called()
+        assert set(local.assets) == {"data", "s3_data"}
+
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=DAAC_INFO)
+    def test_s3_only_asset_without_https_sibling_is_dropped_on_failure(self, _info, mock_get_maap, tmp_path, clean_daac_caches):
+        mock_get_maap.return_value.aws.earthdata_s3_credentials.side_effect = Exception("401")
+        d = _daac_item(tmp_path)
+        del d["assets"]["data"]
+        local = stage_in_download(tmp_path, d)
+        assert "s3_data" not in local.assets
+
+    @patch('stage_in.boto3')
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=DAAC_INFO)
+    def test_credentials_cached_per_endpoint(self, _info, mock_get_maap, mock_boto3, tmp_path, clean_daac_caches):
+        mock_get_maap.return_value.aws.earthdata_s3_credentials.return_value = CREDS
+        d = _daac_item(tmp_path)
+        d["assets"]["s3_two"] = {"href": "s3://daac-prod-protected/Coll/other.hdf"}
+        stage_in_download(tmp_path, d)
+        assert mock_get_maap.return_value.aws.earthdata_s3_credentials.call_count == 1
+
+    @patch('stage_in._get_maap')
+    @patch('stage_in._direct_distribution_info', return_value=DAAC_INFO)
+    def test_bucket_not_in_collection_buckets_is_rejected(self, _info, mock_get_maap, tmp_path, clean_daac_caches):
+        import stage_in
+        with pytest.raises(RuntimeError, match="not one of the collection"):
+            stage_in._download_daac_s3("s3://evil-bucket/x.hdf", str(tmp_path), ("P", "N", "1"))
+
+
+def stage_in_download(tmp_path, item_dict):
+    import stage_in
+    cat = pystac.Catalog(id="c", description="d")
+    return stage_in._download_single_item(item_dict, str(tmp_path), cat)
