@@ -7,22 +7,111 @@ for both STAC catalog outputs and non-STAC directory outputs.
 
 import json
 import os
+import re
 from typing import Dict, Any, Optional, Tuple
 
-def get_job_info():
-    """Extract job information from _job.json"""
+DEFAULT_OUTPUT_BUCKET_ENV = "DEFAULT_OUTPUT_BUCKET"
+
+# S3 bucket naming rules (3-63 chars, lowercase letters/digits/dots/hyphens).
+_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+class OutputTargetError(RuntimeError):
+    """Raised when the job's output bucket/prefix cannot be resolved or is invalid."""
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def validate_output_bucket(bucket: Any) -> str:
+    """Return the bucket name if it is a valid bare S3 bucket name, else raise."""
+    if not isinstance(bucket, str) or not _BUCKET_RE.match(bucket) \
+            or ".." in bucket or _IPV4_RE.match(bucket):
+        raise OutputTargetError(
+            f"Invalid output_bucket {bucket!r}: expected a bare S3 bucket name "
+            "(no s3:// scheme, no slashes)"
+        )
+    return bucket
+
+
+def validate_output_prefix(prefix: Any) -> str:
+    """Return the prefix if it is already normalized, else raise.
+
+    The API owns normalization; the executor only refuses values that would
+    produce a broken or unsafe publish location.
+    """
+    if not isinstance(prefix, str) or not prefix:
+        raise OutputTargetError(f"Invalid output_prefix {prefix!r}: must be a non-empty string")
+    if prefix != prefix.strip() or any(ord(c) < 32 for c in prefix):
+        raise OutputTargetError(f"Invalid output_prefix {prefix!r}: whitespace or control characters")
+    if prefix.startswith("/") or prefix.endswith("/"):
+        raise OutputTargetError(f"Invalid output_prefix {prefix!r}: leading or trailing slash")
+    for segment in prefix.split("/"):
+        if segment in ("", ".", ".."):
+            raise OutputTargetError(
+                f"Invalid output_prefix {prefix!r}: empty, '.' or '..' path segment"
+            )
+    return prefix
+
+
+def load_job(path: str = "_job.json") -> Dict[str, Any]:
+    """Read _job.json. Fails loudly: there is no safe fallback without it."""
     try:
-        with open("_job.json") as fr:
-            job = json.loads(fr.read())
-            username = job.get("username", "null")
-            job_type_info = str(job.get("type")).split(":")  # example job-s1_orbit_crawler:release-20190313
-            algo_name = job_type_info[0].replace("job-", "")
-            algo_version = job_type_info[1]
-            tag = job.get("tag", "null-tag")
-            return {"username": username, "algorithm_name": algo_name, "algorithm_version": algo_version, "tag": tag}
+        with open(path) as fr:
+            job = json.load(fr)
     except Exception as e:
-        print(f"Warning: Could not read _job.json: {e}")
-        return {"username": "unknown", "algorithm_name": "unknown", "algorithm_version": "unknown", "tag": "unknown"}
+        raise OutputTargetError(f"Could not read {path}: {e}") from e
+    if not isinstance(job, dict):
+        raise OutputTargetError(f"{path} is not a JSON object")
+    return job
+
+
+def resolve_output_target(job: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    Resolve (output_bucket, output_prefix) for a job.
+
+    - bucket: job["output_bucket"], else $DEFAULT_OUTPUT_BUCKET (from maap-dps.env)
+    - prefix: job["output_prefix"], else the job's username
+    Jobs submitted before the API sent these fields therefore keep working.
+    Raises OutputTargetError if a value is missing or invalid; never guesses.
+    """
+    bucket = job.get("output_bucket")
+    if _is_blank(bucket):
+        bucket = os.environ.get(DEFAULT_OUTPUT_BUCKET_ENV)
+        if _is_blank(bucket):
+            raise OutputTargetError(
+                f"No output_bucket in _job.json and {DEFAULT_OUTPUT_BUCKET_ENV} is not set "
+                "(expected from /maap-dps.env)"
+            )
+    prefix = job.get("output_prefix")
+    if _is_blank(prefix):
+        prefix = job.get("username")
+        if _is_blank(prefix):
+            raise OutputTargetError("No output_prefix and no username in _job.json")
+    return validate_output_bucket(bucket), validate_output_prefix(prefix)
+
+
+def get_job_info():
+    """Extract job information from _job.json. Raises OutputTargetError on failure."""
+    job = load_job()
+    output_bucket, output_prefix = resolve_output_target(job)
+    username = job.get("username")
+    if _is_blank(username):
+        raise OutputTargetError("No username in _job.json")
+    job_type_info = str(job.get("type")).split(":")  # example job-s1_orbit_crawler:release-20190313
+    algo_name = job_type_info[0].replace("job-", "")
+    algo_version = job_type_info[1] if len(job_type_info) > 1 else "unknown"
+    tag = job.get("tag", "null-tag")
+    return {
+        "username": username,
+        "algorithm_name": algo_name,
+        "algorithm_version": algo_version,
+        "tag": tag,
+        "output_bucket": output_bucket,
+        "output_prefix": output_prefix,
+    }
 
 
 def create_dataset_metadata(
@@ -84,7 +173,8 @@ def create_met_metadata(
 
     Returns:
         Dictionary for met.json file. When stac_metadata is provided, includes:
-        - Basic job metadata (username, algorithm_name, algorithm_version, tag, creation_timestamp)
+        - Basic job metadata (username, algorithm_name, algorithm_version, tag, output_bucket,
+          output_prefix, creation_timestamp)
         - stac_catalog: Catalog summary with collections array grouped by collection ID,
           including complete item inventory for search and discovery
     """
@@ -99,6 +189,8 @@ def create_met_metadata(
         "algorithm_name": job_info.get("algorithm_name", "unknown"),
         "algorithm_version": job_info.get("algorithm_version", "unknown"),
         "tag": job_info.get("tag", "unknown"),
+        "output_bucket": validate_output_bucket(job_info.get("output_bucket")),
+        "output_prefix": validate_output_prefix(job_info.get("output_prefix")),
         "creation_timestamp": creation_timestamp
     }
 

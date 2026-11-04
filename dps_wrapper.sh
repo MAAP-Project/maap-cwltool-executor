@@ -4,6 +4,9 @@ USERNAME=$(python /app/get_username.py)
 source /maap-dps.env
 export MAAP_API_HOST
 export DPS_MACHINE_TOKEN
+export DEFAULT_OUTPUT_BUCKET
+# Fail before any compute if the output location cannot be resolved/published to
+python /app/validate_output_target.py || exit $?
 MAAP_PGT=$(python /app/get_maap_pgt_token.py) || exit $?
 export MAAP_PGT
 unset DPS_MACHINE_TOKEN

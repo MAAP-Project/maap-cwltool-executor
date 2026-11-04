@@ -41,6 +41,8 @@ def create_per_item_metadata(dataset_dir, stac_metadata, job_info, creation_time
             "algorithm_name": job_info.get("algorithm_name", "unknown"),
             "algorithm_version": job_info.get("algorithm_version", "unknown"),
             "tag": job_info.get("tag", "unknown"),
+            "output_bucket": hysds_metadata.validate_output_bucket(job_info.get("output_bucket")),
+            "output_prefix": hysds_metadata.validate_output_prefix(job_info.get("output_prefix")),
             "creation_timestamp": creation_timestamp,
             "stac_item": item
         }
@@ -274,17 +276,16 @@ def create_hysds_metadata(dataset_dir, stac_metadata, creation_timestamp=None):
         stac_metadata: STAC metadata dict or None
         creation_timestamp: ISO format timestamp (optional)
     """
-    try:
-        job_info = hysds_metadata.get_job_info()
-        hysds_metadata.write_metadata_files(
-            dataset_dir=dataset_dir,
-            dataset_name=os.path.basename(dataset_dir),
-            stac_metadata=stac_metadata,
-            job_info=job_info,
-            creation_timestamp=creation_timestamp
-        )
-    except Exception as e:
-        print(f"  Error creating HySDS metadata: {e}")
+    # Deliberately not caught: without .met.json (output_bucket/output_prefix) the
+    # HySDS publish step fails later with an obscure KeyError, so fail the job here.
+    job_info = hysds_metadata.get_job_info()
+    hysds_metadata.write_metadata_files(
+        dataset_dir=dataset_dir,
+        dataset_name=os.path.basename(dataset_dir),
+        stac_metadata=stac_metadata,
+        job_info=job_info,
+        creation_timestamp=creation_timestamp
+    )
 
 
 if __name__ == '__main__':
@@ -303,5 +304,9 @@ if __name__ == '__main__':
     )
 
     args = parser.parse_args()
-    success = process_outputs(args.stage_out_result_file, args.create_item_metadata)
+    try:
+        success = process_outputs(args.stage_out_result_file, args.create_item_metadata)
+    except hysds_metadata.OutputTargetError as e:
+        print(f"FATAL: {e}", file=sys.stderr)
+        sys.exit(1)
     sys.exit(0 if success else 1)

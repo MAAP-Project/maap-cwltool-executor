@@ -59,6 +59,15 @@ The system requires MAAP environment variables:
 - `MAAP_API_HOST` - MAAP API endpoint
 - `DPS_MACHINE_TOKEN` - Authentication token
 - `MAAP_PGT` - Proxy granting ticket (obtained dynamically)
+- `DEFAULT_OUTPUT_BUCKET` - Default output bucket (e.g. `maap-ops-workspace`); sourced from `/maap-dps.env` alongside `MAAP_API_HOST` and `DPS_MACHINE_TOKEN`. There is no hardcoded fallback. Required only when `_job.json` carries no `output_bucket`.
+
+## Output Target (bucket + prefix)
+
+The API puts `output_bucket` / `output_prefix` in `_job.json`. `hysds_metadata.resolve_output_target()` resolves them:
+bucket = `output_bucket` or `$DEFAULT_OUTPUT_BUCKET`; prefix = `output_prefix` or the username (so pre-API-change jobs still work).
+Both are always written (non-empty) to every `.met.json`, because HySDS formats the publish location from them and a missing key fails publish.
+Failures are loud: unreadable `_job.json`, missing username, missing default bucket, or an invalid bucket/prefix raise `OutputTargetError`.
+`validate_output_target.py` runs first in `dps_wrapper.sh` (before any compute) to fail fast. Local checks only; no bucket probing. Authorization is the API's job.
 
 ## CWL Input Types
 
@@ -136,6 +145,8 @@ When a CWL output Directory contains a STAC catalog (catalog.json), the system:
   "algorithm_name": "...",
   "algorithm_version": "...",
   "tag": "...",
+  "output_bucket": "...",       // always present, non-empty
+  "output_prefix": "...",       // always present, non-empty
   "stac_catalog": {             // if STAC output
     "id": "...",
     "description": "...",
