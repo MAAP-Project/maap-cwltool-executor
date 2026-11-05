@@ -155,7 +155,7 @@ def parse_cwl_inputs(cwl_file_path) -> [CommandInputParameter]:
 
             if not cwl_object.inputs:
                 print("- No inputs defined.")
-                return
+                return []
 
             return cwl_object.inputs
 
