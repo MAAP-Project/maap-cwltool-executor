@@ -56,47 +56,66 @@ def validate_output_prefix(prefix: Any) -> str:
     return prefix
 
 
-def load_job(path: str = "_job.json") -> Dict[str, Any]:
-    """Read _job.json. Fails loudly: there is no safe fallback without it."""
+def _load_json_object(path: str) -> Dict[str, Any]:
     try:
         with open(path) as fr:
-            job = json.load(fr)
+            data = json.load(fr)
     except Exception as e:
         raise OutputTargetError(f"Could not read {path}: {e}") from e
-    if not isinstance(job, dict):
+    if not isinstance(data, dict):
         raise OutputTargetError(f"{path} is not a JSON object")
-    return job
+    return data
 
 
-def resolve_output_target(job: Dict[str, Any]) -> Tuple[str, str]:
+def load_job(path: str = "_job.json") -> Dict[str, Any]:
+    """Read _job.json. Fails loudly: there is no safe fallback without it."""
+    return _load_json_object(path)
+
+
+def load_context(path: str = "_context.json") -> Dict[str, Any]:
+    """Read _context.json (the job payload). Fails loudly: HySDS always writes it.
+
+    Job-spec params with ``destination: context`` (such as ``output_bucket`` and
+    ``output_prefix``) are merged into the payload as top-level keys, so they
+    land here and never at the top level of _job.json.
+    """
+    return _load_json_object(path)
+
+
+def resolve_output_target(job: Dict[str, Any], context: Dict[str, Any]) -> Tuple[str, str]:
     """
     Resolve (output_bucket, output_prefix) for a job.
 
-    - bucket: job["output_bucket"], else $DEFAULT_OUTPUT_BUCKET (from maap-dps.env)
-    - prefix: job["output_prefix"], else the job's username
-    Jobs submitted before the API sent these fields therefore keep working.
+    - bucket: context["output_bucket"], else $DEFAULT_OUTPUT_BUCKET (from maap-dps.env)
+    - prefix: context["output_prefix"], else the job's username (from _job.json)
+    The values come from _context.json because Mozart routes job-spec params with
+    ``destination: context`` there. Jobs whose spec does not declare them (or that
+    were submitted before the API sent them) therefore keep the default target.
     Raises OutputTargetError if a value is missing or invalid; never guesses.
     """
-    bucket = job.get("output_bucket")
+    bucket = context.get("output_bucket")
     if _is_blank(bucket):
         bucket = os.environ.get(DEFAULT_OUTPUT_BUCKET_ENV)
         if _is_blank(bucket):
             raise OutputTargetError(
-                f"No output_bucket in _job.json and {DEFAULT_OUTPUT_BUCKET_ENV} is not set "
+                f"No output_bucket in _context.json and {DEFAULT_OUTPUT_BUCKET_ENV} is not set "
                 "(expected from /maap-dps.env)"
             )
-    prefix = job.get("output_prefix")
+    prefix = context.get("output_prefix")
     if _is_blank(prefix):
         prefix = job.get("username")
         if _is_blank(prefix):
-            raise OutputTargetError("No output_prefix and no username in _job.json")
+            raise OutputTargetError("No output_prefix in _context.json and no username in _job.json")
     return validate_output_bucket(bucket), validate_output_prefix(prefix)
 
 
 def get_job_info():
-    """Extract job information from _job.json. Raises OutputTargetError on failure."""
+    """Extract job information from _job.json and the output target from _context.json.
+
+    Raises OutputTargetError on failure.
+    """
     job = load_job()
-    output_bucket, output_prefix = resolve_output_target(job)
+    output_bucket, output_prefix = resolve_output_target(job, load_context())
     username = job.get("username")
     if _is_blank(username):
         raise OutputTargetError("No username in _job.json")
