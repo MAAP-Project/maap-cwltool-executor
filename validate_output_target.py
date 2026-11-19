@@ -2,7 +2,7 @@
 Pre-compute gate: resolve and validate the job's output bucket/prefix.
 
 Run from dps_wrapper.sh before any expensive work so that a job which cannot be
-published (missing/unreadable _job.json, no default bucket in /maap-dps.env,
+published (missing/unreadable _job.json or _context.json, no default bucket in /maap-dps.env,
 malformed bucket or prefix) fails immediately instead of after the CWL run.
 Local checks only: no network access, no bucket probing.
 """

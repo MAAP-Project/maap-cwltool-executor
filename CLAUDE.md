@@ -59,14 +59,14 @@ The system requires MAAP environment variables:
 - `MAAP_API_HOST` - MAAP API endpoint
 - `DPS_MACHINE_TOKEN` - Authentication token
 - `MAAP_PGT` - Proxy granting ticket (obtained dynamically)
-- `DEFAULT_OUTPUT_BUCKET` - Default output bucket (e.g. `maap-ops-workspace`); sourced from `/maap-dps.env` alongside `MAAP_API_HOST` and `DPS_MACHINE_TOKEN`. There is no hardcoded fallback. Required only when `_job.json` carries no `output_bucket`.
+- `DEFAULT_OUTPUT_BUCKET` - Default output bucket (e.g. `maap-ops-workspace`); sourced from `/maap-dps.env` alongside `MAAP_API_HOST` and `DPS_MACHINE_TOKEN`. There is no hardcoded fallback. Required only when `_context.json` carries no `output_bucket`.
 
 ## Output Target (bucket + prefix)
 
-The API puts `output_bucket` / `output_prefix` in `_job.json`. `hysds_metadata.resolve_output_target()` resolves them:
+The API submits `output_bucket` / `output_prefix` as job params. The job spec declares them with `destination: context`, so Mozart merges them into the payload and they arrive as top-level keys of `_context.json` (never `_job.json`; params the job spec does not declare are dropped by Mozart). `hysds_metadata.resolve_output_target()` resolves them:
 bucket = `output_bucket` or `$DEFAULT_OUTPUT_BUCKET`; prefix = `output_prefix` or the username (so pre-API-change jobs still work).
 Both are always written (non-empty) to every `.met.json`, because HySDS formats the publish location from them and a missing key fails publish.
-Failures are loud: unreadable `_job.json`, missing username, missing default bucket, or an invalid bucket/prefix raise `OutputTargetError`.
+Failures are loud: unreadable `_job.json` or `_context.json`, missing username, missing default bucket, or an invalid bucket/prefix raise `OutputTargetError`.
 `validate_output_target.py` runs first in `dps_wrapper.sh` (before any compute) to fail fast. Local checks only; no bucket probing. Authorization is the API's job.
 
 ## CWL Input Types
@@ -183,7 +183,7 @@ When a CWL output Directory contains a STAC catalog (catalog.json), the system:
    - Processes each output independently
    - Creates timestamped dataset directory for each output
    - Saves STAC metadata as reference file in dataset
-   - Reads job metadata from `_job.json`
+   - Reads job metadata from `_job.json` and the output target from `_context.json`
    - Creates `.dataset.json` and `.met.json` using hysds_metadata module directly
 
 3. **Result**:

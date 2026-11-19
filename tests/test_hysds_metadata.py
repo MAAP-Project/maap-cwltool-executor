@@ -20,10 +20,12 @@ def env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
 
-def write_job(**extra):
-    job = {**JOB, **extra}
-    Path("_job.json").write_text(json.dumps(job))
-    return job
+def write_job(**context_extra):
+    """Write _job.json plus _context.json; output_bucket/output_prefix go in the context,
+    which is where Mozart routes job-spec params with destination: context."""
+    Path("_job.json").write_text(json.dumps(JOB))
+    Path("_context.json").write_text(json.dumps({"job_specification": {"params": []}, **context_extra}))
+    return context_extra
 
 
 def test_fields_present():
@@ -77,8 +79,24 @@ def test_unreadable_job_json_fails_loudly():
         hm.get_job_info()
 
 
+def test_target_in_job_json_is_ignored():
+    # Mozart never puts params at the top level of _job.json; only _context.json counts
+    write_job()
+    Path("_job.json").write_text(json.dumps({**JOB, "output_bucket": "org-bucket", "output_prefix": "x"}))
+    info = hm.get_job_info()
+    assert (info["output_bucket"], info["output_prefix"]) == ("maap-ops-workspace", "alice")
+
+
+def test_unreadable_context_json_fails_loudly():
+    write_job()
+    Path("_context.json").unlink()
+    with pytest.raises(hm.OutputTargetError, match="_context.json"):
+        hm.get_job_info()
+
+
 def test_missing_username_fails():
-    Path("_job.json").write_text(json.dumps({"type": "job-a:b", "output_bucket": "bkt-1", "output_prefix": "p"}))
+    write_job(output_bucket="bkt-1", output_prefix="p")
+    Path("_job.json").write_text(json.dumps({"type": "job-a:b"}))
     with pytest.raises(hm.OutputTargetError, match="username"):
         hm.get_job_info()
 
